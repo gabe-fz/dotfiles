@@ -2,16 +2,17 @@ dotfiles_home="$HOME/dotfiles" # dotfiles home
 p10k_config_file="$dotfiles_home/.p10k.zsh"
 fzf_config_files="$dotfiles_home/.fzf.zsh"
 
-# Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
-# Initialization code that may require console input (password prompts, [y/n]
-# confirmations, etc.) must go above this block; everything else may go below.
-if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
-  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
-fi
 
-source /usr/local/opt/powerlevel10k/powerlevel10k.zsh-theme
+######### ZSH #########
+#######################
 
-# To customize prompt, run `p10k configure` or edit ~/.p10k.zsh.
+autoload -Uz compinit
+compinit
+zstyle ':completion:*' menu select
+
+######### OTHER ZSH CONFIGS #########
+#####################################
+
 [ -f $p10k_config_file ] && source $p10k_config_file
 
 [ -f $fzf_config_files ] && source $fzf_config_files
