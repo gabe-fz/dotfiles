@@ -33,8 +33,9 @@ alias muxkill="tmux kill-server"
 ######### SYSTEN #########
 ##########################
 
-alias ls='ls -G'
-alias ll='ls -lAG'
+alias ls='exa'
+alias la='ls -a'
+alias ll='la -l'
 
 # Preferred editor for local and remote sessions
 if [[ -n $SSH_CONNECTION ]]; then
