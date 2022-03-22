@@ -9,6 +9,7 @@ fzf_config_files="$dotfiles_home/.fzf.zsh"
 autoload -Uz compinit
 compinit
 zstyle ':completion:*' menu select
+alias reload="source ~/.zshrc"
 
 ######### OTHER ZSH CONFIGS #########
 #####################################
