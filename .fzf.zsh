@@ -1,16 +1,41 @@
 # Setup fzf
 # ---------
-if [[ ! "$PATH" == */usr/local/opt/fzf/bin* ]]; then
+
+# intel mac
+if [[ ! "$PATH" == */usr/local/opt/fzf/bin* ]] && [[ $(uname -m) == 'x86_64' ]]; then
   export PATH="${PATH:+${PATH}:}/usr/local/opt/fzf/bin"
+fi
+
+# m1 mac
+if [[ ! "$PATH" == */opt/homebrew/opt/fzf/bin* ]] && [[ $(uname -m) == 'arm64' ]]; then
+  export PATH="${PATH:+${PATH}:}/opt/homebrew/opt/fzf/bin"
 fi
 
 # Auto-completion
 # ---------------
-[[ $- == *i* ]] && source "/usr/local/opt/fzf/shell/completion.zsh" 2> /dev/null
+
+# intel mac
+if [[ $(uname -m) == 'x86_64' ]]; then
+  [[ $- == *i* ]] && source "/usr/local/opt/fzf/shell/completion.zsh" 2> /dev/null
+fi
+
+# m1 mac
+if [[ $(uname -m) == 'arm64' ]]; then
+  [[ $- == *i* ]] && source "/opt/homebrew/opt/fzf/shell/completion.zsh" 2> /dev/null
+fi
 
 # Key bindings
 # ------------
-source "/usr/local/opt/fzf/shell/key-bindings.zsh"
+
+# intel mac
+if [[ $(uname -m) == 'x86_64' ]]; then
+  source "/usr/local/opt/fzf/shell/key-bindings.zsh"
+fi
+
+# m1 mac
+if [[ $(uname -m) == 'arm64' ]]; then
+  source "/opt/homebrew/opt/fzf/shell/key-bindings.zsh"
+fi
 
 # Custom Opts
 

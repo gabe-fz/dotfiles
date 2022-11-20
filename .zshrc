@@ -9,6 +9,7 @@ fzf_config_files="$dotfiles_home/.fzf.zsh"
 autoload -Uz compinit
 compinit
 zstyle ':completion:*' menu select
+alias reload="source ~/.zshrc"
 
 ######### OTHER ZSH CONFIGS #########
 #####################################
@@ -68,13 +69,3 @@ alias gitignorerm="git rm --cached \`git ls-files -i --exclude-from=.gitignore\`
 alias gituncommit="git reset HEAD^"
 alias gitbranchpurgels="git fetch --prune && git branch -r | cut -c 10- | grep -v develop | grep -v master | grep -v release"
 alias gitbranchpurgecommit="git fetch --prune && git branch -r | cut -c 10- | grep -v develop | grep -v master | grep -v release | xargs git push origin --delete"
-
-######### SDKMAN #########
-##########################
-
-alias gradle5="sdk use gradle 5.6"
-alias gradle6="sdk use gradle 6.8"
-alias gradle7="sdk use gradle 7.2"
-alias java8="sdk use java 8.0.242-zulu"
-alias java11="sdk use java 11.0.2-open"
-alias java17="sdk use java 17.0.1-open"
