@@ -23,6 +23,7 @@ zstyle ':completion:*' menu select
 alias fixchromepws="find ~/Library/'Application Support'/Google/Chrome/ -type f -name 'Login Data*' -delete"
 alias fixBindings="mv ~/Library/Preferences/com.apple.symbolichotkeys.plist ~/Desktop/com.apple.symbolichotkeys.plist"
 alias checkspeed='curl -w "%{time_total}\n" -o /dev/null -X POST -s -L https://www.google.com/search\?q\=sample'
+alias checkinterfaces='ifconfig | grep -A 2 utun | grep -B 1 10.'
 
 ######### TMUX #########
 ##########################
