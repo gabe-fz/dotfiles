@@ -1,45 +1,23 @@
 # Setup fzf
 # ---------
 
-# intel mac
-if [[ ! "$PATH" == */usr/local/opt/fzf/bin* ]] && [[ $(uname -m) == 'x86_64' ]]; then
-  export PATH="${PATH:+${PATH}:}/usr/local/opt/fzf/bin"
-fi
+local brew_prefix
+brew_prefix="$(brew --prefix)"
 
-# m1 mac
-if [[ ! "$PATH" == */opt/homebrew/opt/fzf/bin* ]] && [[ $(uname -m) == 'arm64' ]]; then
-  export PATH="${PATH:+${PATH}:}/opt/homebrew/opt/fzf/bin"
+# Add fzf to PATH
+if [[ ! "$PATH" == *"$brew_prefix/opt/fzf/bin"* ]]; then
+  export PATH="${PATH:+${PATH}:}$brew_prefix/opt/fzf/bin"
 fi
 
 # Auto-completion
-# ---------------
-
-# intel mac
-if [[ $(uname -m) == 'x86_64' ]]; then
-  [[ $- == *i* ]] && source "/usr/local/opt/fzf/shell/completion.zsh" 2> /dev/null
-fi
-
-# m1 mac
-if [[ $(uname -m) == 'arm64' ]]; then
-  [[ $- == *i* ]] && source "/opt/homebrew/opt/fzf/shell/completion.zsh" 2> /dev/null
-fi
+[[ $- == *i* ]] && source "$brew_prefix/opt/fzf/shell/completion.zsh" 2> /dev/null
 
 # Key bindings
-# ------------
-
-# intel mac
-if [[ $(uname -m) == 'x86_64' ]]; then
-  source "/usr/local/opt/fzf/shell/key-bindings.zsh"
-fi
-
-# m1 mac
-if [[ $(uname -m) == 'arm64' ]]; then
-  source "/opt/homebrew/opt/fzf/shell/key-bindings.zsh"
-fi
+source "$brew_prefix/opt/fzf/shell/key-bindings.zsh"
 
 # Custom Opts
 
-# Use ~~ as the trigger sequence instead of the default **
+# Use `` as the trigger sequence instead of the default **
 export FZF_COMPLETION_TRIGGER='``'
 
 # Options to fzf command
@@ -48,7 +26,7 @@ export FZF_DEFAULT_OPTS="--height 40% --layout reverse --border --multi --inline
 export FZF_COMPLETION_OPTS="$FZF_DEFAULT_OPTS $fzf_preview_opts"
 
 # Use fd (https://github.com/sharkdp/fd) instead of the default find
-# command for listing path candidates.80
+# command for listing path candidates.
 # - The first argument to the function ($1) is the base path to start traversal
 # - See the source code (completion.{bash,zsh}) for the details.
 _fzf_compgen_path() {
@@ -77,8 +55,5 @@ alias fzf~="fd~ | fzf"
 
 # fzf mixes
 alias .code='code $(fzfp)'
-alias .code-='code $(fzfp)'
-alias .code~='code $(fzfp)'
 alias .cd='cd $(fzf-)'
-alias .cd-='.cd'
 alias .cd~='cd $(fzf~)'

@@ -1,0 +1,26 @@
+# 1. environment (before anything can init zle)
+export EDITOR='vi'
+export PATH="$HOME/.local/bin:$PATH"
+
+# 2. keymap — explicit, never inferred from $EDITOR
+bindkey -e
+
+# 3. completions (cached: full scan at most once/day)
+autoload -Uz compinit
+if [[ -n ~/.zcompdump(#qN.mh-24) ]]; then compinit -C; else compinit; fi
+zstyle ':completion:*' menu select
+
+# 4. personal modules
+for f in ~/.config/zsh/*.zsh(N); do source "$f"; done
+
+# 5. machine-local + secrets (never committed anywhere)
+[ -f ~/.zshrc.local ] && source ~/.zshrc.local
+
+# 6. extension drop-ins — contract with external generators (e.g. vps-setup)
+for f in ~/.zshrc.d/*.zsh(N); do source "$f"; done
+
+# 7. prompt last
+command -v starship >/dev/null && eval "$(starship init zsh)"
+
+# 8. VS Code shell integration
+[[ "$TERM_PROGRAM" == "vscode" ]] && . "$(code --locate-shell-integration-path zsh)"
