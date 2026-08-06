@@ -1,0 +1,9 @@
+# Ghostty config (chezmoi-managed: edit in ~/dotfiles, then `chezmoi apply`).
+# Note: ~/Library/Application Support/com.mitchellh.ghostty/config is ALSO
+# read (after this file, so it wins on conflicts) — keep everything here.
+
+# Shift+Enter → ESC+CR: Claude Code (and most readline-style TUIs) treat
+# Meta+Enter as "insert newline" instead of "submit". A terminal-level
+# keybind works identically inside and outside tmux, so Shift+Enter always
+# means newline regardless of what tmux does to modified keys.
+keybind = shift+enter=text:\x1b\r
