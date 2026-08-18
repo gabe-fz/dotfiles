@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# claude-reap — exit idle/cleared Claude Code sessions to reclaim memory.
+#
+# WHY THIS EXISTS
+#   Each Claude Code session holds ~350-600 MB of physical footprint. Thirty of
+#   them on a 16 GB machine exhausts RAM, and the kernel then spends more time
+#   compressing and swapping pages than running your code (measured: 51% sys vs
+#   18% user, 2454 swapins/sec, ~500M page faults per session). Closing stale
+#   sessions is the fix; this reaps the ones that are provably finished.
+#
+# HOW IT KNOWS A SESSION IS SAFE
+#   It does not guess from CPU or scrape the UI for state. It reads the pane
+#   options metamux's Claude Code hooks already maintain:
+#       @metamux_status     ready | idle | working | subagents | blocked
+#       @metamux_status_ts  epoch seconds when that state was entered
+#   ready = fresh / just /clear'ed / resumed.  idle = Claude replied, your turn.
+#   working/subagents/blocked mean a turn, a subagent, or a permission prompt is
+#   live — those are NEVER reaped. A pane with no status at all is UNKNOWN and
+#   is also never reaped.
+#
+# WHY `ready` IS THE DEFAULT AND `idle` IS OPT-IN
+#   `idle` is not the same as "done". A session that was INTERRUPTED mid-task,
+#   or that asked a question you never answered, also sits at `idle` with all
+#   its context intact. Reaping those loses real work. So `ready` (genuinely
+#   cleared) is the default, `idle` requires asking for it, and even then the
+#   open-thread guard below screens each candidate.
+#
+#   `ready` is ALSO cross-checked, because the status can go stale: hooks stop
+#   updating long-lived sessions, so a `ready` from SessionStart can sit on a
+#   session that has since done real work. A `ready` pane is only reaped when
+#   its statusline is readable AND shows no ctx field. See verified_cleared().
+#
+# SAFETY PROPERTIES
+#   * dry-run by default; nothing dies without --yes
+#   * the pane you run this from is `working` (it is running this script), so it
+#     excludes itself by construction -- no PID juggling needed
+#   * --min-idle enforces a dwell time, so a session you touched minutes ago is
+#     never a candidate
+#   * the open-thread guard skips panes showing an interrupt or an unanswered
+#     question, unless --force
+#   * SIGTERM, never SIGKILL. Transcripts are appended continuously, so a
+#     TERM'ed session stays fully resumable with `claude --resume`.
+#
+set -uo pipefail
+
+STATES="ready"        # --state ready|idle|both
+MIN_IDLE_H=24         # --min-idle H
+ASSUME_YES=0          # --yes
+FORCE=0               # --force  (ignore the open-thread guard)
+VIA_KEYS=0            # --via-keys (send /exit instead of SIGTERM)
+KEEP=""               # --keep <pane-id|pid>  (repeatable)
+QUIET=0
+
+usage() {
+  sed -n '2,/^set -uo/p' "$0" | sed 's/^# \{0,1\}//; $d'
+  cat <<'HELPTEXT'
+USAGE
+  claude-reap [options]
+
+OPTIONS
+  --state ready|idle|both   which states to reap        (default: ready)
+  --min-idle HOURS          minimum dwell in that state (default: 24)
+  --yes                     actually reap; otherwise dry-run
+  --force                   ignore the open-thread guard (dangerous)
+  --via-keys                exit via `/exit` keystrokes instead of SIGTERM
+  --keep PANE|PID           never reap this pane/pid (repeatable)
+  --quiet                   only print the summary line
+  -h, --help                this help
+
+EXAMPLES
+  claude-reap                          # dry-run: what would be reaped
+  claude-reap --yes                    # reap cleared sessions idle >24h
+  claude-reap --state both --min-idle 72 --yes
+  claude-reap --state idle --keep %205 --yes
+HELPTEXT
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --state)    STATES="${2:-}"; shift 2 ;;
+    --min-idle) MIN_IDLE_H="${2:-}"; shift 2 ;;
+    --keep)     KEEP="$KEEP ${2:-}"; shift 2 ;;
+    --yes)      ASSUME_YES=1; shift ;;
+    --force)    FORCE=1; shift ;;
+    --via-keys) VIA_KEYS=1; shift ;;
+    --quiet)    QUIET=1; shift ;;
+    -h|--help)  usage; exit 0 ;;
+    *) echo "claude-reap: unknown option '$1' (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+case "$STATES" in
+  ready) WANT="ready" ;;
+  idle)  WANT="idle" ;;
+  both)  WANT="ready idle" ;;
+  *) echo "claude-reap: --state must be ready, idle, or both" >&2; exit 2 ;;
+esac
+
+command -v tmux >/dev/null || { echo "claude-reap: tmux not found" >&2; exit 1; }
+tmux list-panes -a >/dev/null 2>&1 || { echo "claude-reap: no tmux server" >&2; exit 1; }
+
+NOW=$(date +%s)
+CANDIDATES=""   # pane|pid|status|age_h|rss_mb|path
+SKIPPED=""      # pane|reason|detail
+
+wanted() { case " $WANT " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+kept()   { case " $KEEP " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# Largest-RSS claude process on a tty: the real session, not a helper child.
+claude_pid_for_tty() {
+  ps -Ao pid,rss,tty,comm 2>/dev/null \
+    | awk -v T="${1#/dev/}" '$3==T && $4 ~ /claude/ {print $2, $1}' \
+    | sort -rn | head -1 | awk '{print $2}'
+}
+
+# Positive proof a pane is genuinely cleared. FAILS CLOSED on purpose.
+#
+# @metamux_status CANNOT be trusted on its own: on long-lived sessions the hooks
+# stop updating it, leaving a `ready` stamped at SessionStart days earlier while
+# the session went on to do real work. Measured 2026-08-18: six panes reported
+# `ready` with an age of ~359h while holding 62k-179k tokens of live context.
+#
+# So we require POSITIVE evidence of emptiness, never mere absence of evidence:
+# the statusline must be READABLE (the model marker is present) AND must show no
+# `ctx N%` field. If the pane cannot be captured, or the statusline format
+# changed and no marker matches, this returns false and the pane is skipped.
+verified_cleared() {
+  local snap
+  snap=$(tmux capture-pane -p -t "$1" -S -8 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g')
+  printf '%s' "$snap" | grep -q '◆' || return 1          # unreadable -> skip
+  printf '%s' "$snap" | grep -qE 'ctx [0-9]+%' && return 1 # has context -> skip
+  return 0
+}
+
+# Markers of a session that LOOKS idle but has an unresolved thread.
+has_open_thread() {
+  tmux capture-pane -p -t "$1" -S -120 2>/dev/null \
+    | sed 's/\x1b\[[0-9;]*m//g' \
+    | grep -qE 'Interrupted|declined to answer|What should Claude do instead'
+}
+
+while IFS='|' read -r pane tty target cmd cpath; do
+  case "$cmd" in claude|2.1.*|1.*) ;; *) continue ;; esac
+
+  status=$(tmux show-options -p -t "$pane" -qv @metamux_status 2>/dev/null)
+  ts=$(tmux show-options -p -t "$pane" -qv @metamux_status_ts 2>/dev/null)
+  pid=$(claude_pid_for_tty "$tty")
+  rss=0; [ -n "$pid" ] && rss=$(ps -o rss= -p "$pid" 2>/dev/null | tr -d ' ')
+  rss_mb=$(( ${rss:-0} / 1024 ))
+
+  if [ -z "$status" ]; then
+    SKIPPED="$SKIPPED$pane|no metamux status (UNKNOWN)|$target
+"; continue
+  fi
+  if ! wanted "$status"; then
+    SKIPPED="$SKIPPED$pane|state=$status (protected)|$target
+"; continue
+  fi
+  if kept "$pane" || { [ -n "$pid" ] && kept "$pid"; }; then
+    SKIPPED="$SKIPPED$pane|--keep|$target
+"; continue
+  fi
+  if [ -z "$pid" ]; then
+    SKIPPED="$SKIPPED$pane|no claude pid on $tty|$target
+"; continue
+  fi
+
+  age_h="?"
+  if [ -n "$ts" ]; then
+    age_h=$(( (NOW - ts) / 3600 ))
+    if [ "$age_h" -lt "$MIN_IDLE_H" ]; then
+      SKIPPED="$SKIPPED$pane|only ${age_h}h in $status (<${MIN_IDLE_H}h)|$target
+"; continue
+    fi
+  fi
+
+  if [ "$status" = "ready" ] && ! verified_cleared "$pane"; then
+    SKIPPED="$SKIPPED$pane|STALE ready stamp -- context still live|$target
+"; continue
+  fi
+  if [ "$FORCE" -eq 0 ] && has_open_thread "$pane"; then
+    SKIPPED="$SKIPPED$pane|OPEN THREAD (interrupt/unanswered question)|$target
+"; continue
+  fi
+
+  CANDIDATES="$CANDIDATES$pane|$pid|$status|$age_h|$rss_mb|$target|$cpath
+"
+done <<EOF
+$(tmux list-panes -a -F '#{pane_id}|#{pane_tty}|#{session_name}:#{window_index}.#{pane_index}|#{pane_current_command}|#{pane_current_path}' 2>/dev/null)
+EOF
+
+n=$(printf '%s' "$CANDIDATES" | grep -c . || true)
+total_mb=$(printf '%s' "$CANDIDATES" | awk -F'|' '{s+=$5} END{print s+0}')
+
+if [ "$QUIET" -eq 0 ]; then
+  echo "── skipped ──"
+  if [ -z "$SKIPPED" ]; then echo "  (none)"; else
+    printf '%s' "$SKIPPED" | while IFS='|' read -r p r t; do
+      [ -n "$p" ] && printf "  %-6s %-46s %s\n" "$p" "$r" "$t"
+    done
+  fi
+  echo
+  echo "── reapable (state: $STATES, min-idle: ${MIN_IDLE_H}h) ──"
+  if [ "$n" -eq 0 ]; then echo "  (none)"; else
+    printf "  %-6s %-7s %-7s %-6s %-7s %s\n" PANE PID STATE AGE_H RSS_MB DIR
+    printf '%s' "$CANDIDATES" | while IFS='|' read -r p pid st ah mb t cp; do
+      [ -n "$p" ] && printf "  %-6s %-7s %-7s %-6s %-7s %s\n" "$p" "$pid" "$st" "$ah" "$mb" "$cp"
+    done
+  fi
+  echo
+fi
+
+if [ "$n" -eq 0 ]; then echo "claude-reap: nothing to reap."; exit 0; fi
+
+if [ "$ASSUME_YES" -eq 0 ]; then
+  echo "claude-reap: DRY RUN — $n session(s), ~${total_mb} MB resident. Re-run with --yes to reap."
+  exit 0
+fi
+
+echo "── reaping ──"
+reaped=0
+printf '%s' "$CANDIDATES" | while IFS='|' read -r pane pid st ah mb target cpath; do
+  [ -n "$pane" ] || continue
+  if [ "$VIA_KEYS" -eq 1 ]; then
+    # C-u first: a stale half-typed prompt would otherwise swallow /exit.
+    tmux send-keys -t "$pane" C-u 2>/dev/null
+    tmux send-keys -t "$pane" '/exit' Enter 2>/dev/null
+  else
+    kill "$pid" 2>/dev/null
+  fi
+  # TERM can take several seconds; poll rather than assume.
+  gone=0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! ps -p "$pid" >/dev/null 2>&1; then gone=1; break; fi
+    sleep 1
+  done
+  if [ "$gone" -eq 1 ]; then
+    printf "  reaped  %-6s %-7s %s\n" "$pane" "$pid" "$cpath"
+  else
+    printf "  STAYED  %-6s %-7s %s  (still alive after 10s; not escalating)\n" "$pane" "$pid" "$cpath"
+  fi
+done
+
+echo
+echo "claude-reap: done. Resume any of them with: claude --resume  (in its directory)"
