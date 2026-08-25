@@ -149,8 +149,12 @@ On first apply, `run_onchange_brew-bundle.sh` runs `brew bundle` against the
 - `dot_config/zsh/*.zsh` → `~/.config/zsh/*.zsh` — aliases, fzf
 - `dot_local/bin/*` → `~/.local/bin/*` — personal scripts
 
-**Verify:** `brew bundle check --file ~/dotfiles/Brewfile` reports "dependencies
-are satisfied"; `ls ~/.zshrc ~/.tmux.conf ~/.config/ghostty/config`.
+**Verify:** `ls ~/.zshrc ~/.tmux.conf ~/.config/ghostty/config` all exist.
+`brew bundle check --file ~/dotfiles/Brewfile` confirms the Brewfile — but note
+it also flags **outdated** packages, not just missing ones, so on an
+already-provisioned machine it may list installed-but-not-latest formulae;
+`brew bundle install` reconciles. Presence (via `brew list`) is the real bar for
+a reproduction.
 
 ### 0d. Machine-local config & secrets (NOT in the repo)
 
