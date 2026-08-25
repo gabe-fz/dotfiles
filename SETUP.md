@@ -11,6 +11,33 @@ Almost nothing is installed by hand — two files are the source of truth
 
 ---
 
+## Installing with an agent
+
+The fastest path: hand this guide to an agent (e.g. Claude Code) on the target
+machine and have it execute the steps. If the repo isn't cloned yet, paste the
+contents of `SETUP.md` into the chat, or point the agent at the repo URL. Then
+use one of these prompts.
+
+**Fresh machine:**
+
+> Set up this machine end-to-end using the SETUP.md guide (pasted below / in this
+> repo). It's a fresh machine — start at Layer 0. For every step, run the Detect
+> check first and skip it if already satisfied, then run the Verify command after.
+> Stop and ask me before anything destructive.
+
+**Migrating from pre-chezmoi dotfiles** (this machine already has hand-copied
+dotfiles from before the chezmoi migration — see Layer 0b):
+
+> Set up this machine using the SETUP.md guide (pasted below / in this repo).
+> This machine has existing hand-copied dotfiles that predate chezmoi, so do
+> Layer 0b (Migrate) FIRST: back up my current dotfiles to a timestamped folder,
+> run `chezmoi init` WITHOUT `--apply`, show me `chezmoi diff`, and wait for my
+> confirmation before running `chezmoi apply`. Never touch `~/.zshrc.local` or
+> `~/.zshrc.d`. After the migration, continue with the remaining layers, running
+> each Detect check first and each Verify after.
+
+---
+
 ## For an AI agent running this setup
 
 This guide is written to be executed by an agent end-to-end. Follow these rules:
@@ -90,7 +117,12 @@ If dotfiles are present but unmanaged:
 3. **Reconcile:** anything in the backup the repo would drop and you want to keep
    goes into `~/.zshrc.local` (secrets/machine-local) or a `~/.zshrc.d/*.zsh`
    drop-in — **not** back into the managed `dot_zshrc`.
-4. **Apply:** `chezmoi apply` (see 0c).
+4. **Apply:** `chezmoi apply` (see 0c). For a file you want to reconcile
+   line-by-line instead of overwriting, use `chezmoi merge ~/.zshrc` (opens a
+   3-way merge) before applying the rest.
+
+**Rollback:** if anything looks wrong, the pre-migration copies are in
+`~/dotfiles-premigration-<ts>/` — restore any file with `cp`.
 
 **Verify:** `chezmoi managed | grep .zshrc` returns the file, and
 `diff <(cat ~/.zshrc) <(chezmoi cat ~/.zshrc)` is empty.
