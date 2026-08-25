@@ -3,17 +3,28 @@
 Personal macOS dotfiles managed with [chezmoi](https://www.chezmoi.io/). The
 chezmoi source directory lives at `~/dotfiles`; chezmoi renders it into `$HOME`.
 
-## Install (new machine)
+## Install
 
-One line — installs chezmoi, pulls this repo, and applies it:
+Fast path on a new machine — installs chezmoi, pulls this repo, applies it, and
+runs `brew bundle` against the [`Brewfile`](Brewfile). Install
+[Homebrew](https://brew.sh/) first.
 
 ```
 sh -c "$(curl -fsLS get.chezmoi.io)" -- init --apply gabe-fz
 ```
 
-On first `apply`, the `run_onchange_brew-bundle.sh` script runs `brew bundle`
-against the `Brewfile`, installing every CLI tool and cask below. (Install
-[Homebrew](https://brew.sh/) first if it isn't already present.)
+**Full setup guide → [SETUP.md](SETUP.md)** — fresh install, migrating from
+pre-chezmoi dotfiles, ready-to-paste agent prompts, per-step verification, and
+the Ghostty / tmux / Claude Code details.
+
+## Layout
+
+- `dot_zshrc` → `~/.zshrc` — ordered zsh init (env, keymap, completions, modules, prompt)
+- `dot_tmux.conf` → `~/.tmux.conf`
+- `dot_config/ghostty/config` → `~/.config/ghostty/config`
+- `dot_config/zsh/*.zsh` → `~/.config/zsh/*.zsh` — personal modules (aliases, fzf)
+- `dot_local/bin/*` → `~/.local/bin/*` — personal scripts
+- `Brewfile` + `run_onchange_brew-bundle.sh.tmpl` — package management (the full tool + app list)
 
 ## Day-2 usage
 
@@ -31,39 +42,11 @@ chezmoi cd                # jump into ~/dotfiles (the source dir)
 After editing the `Brewfile`, `chezmoi apply` re-runs `brew bundle` automatically
 (the script is keyed on the Brewfile's hash).
 
-## Layout
-
-- `dot_zshrc` → `~/.zshrc` — ordered zsh init (env, keymap, completions, modules, prompt)
-- `dot_tmux.conf` → `~/.tmux.conf`
-- `dot_config/zsh/*.zsh` → `~/.config/zsh/*.zsh` — personal modules (aliases, fzf)
-- `Brewfile` + `run_onchange_brew-bundle.sh.tmpl` — package management
-
 ## Machine-local config & secrets
 
 Two files are intentionally **not** managed by chezmoi and never committed:
 
 - `~/.zshrc.local` — machine-local settings and **secrets**. Sourced by `~/.zshrc`
   if present. Keep tokens/credentials here.
-- `~/.zshrc.d/*.zsh` — drop-in directory for **external generators** (e.g. the
-  vps-setup work-config generator). `~/.zshrc` sources every `*.zsh` here. Safe
-  to be empty.
-
-## What's included
-
-**CLI tools:**
-- `bat` - cat clone with syntax highlighting
-- `chezmoi` - dotfiles manager
-- `eza` - modern ls replacement (successor to the abandoned `exa`)
-- `fd` - fast find alternative
-- `fzf` - fuzzy finder for the command line
-- `git` - version control
-- `jq` - JSON processor
-- `nnn` - terminal file manager
-- `node` - JavaScript runtime
-- `starship` - minimal, fast shell prompt
-- `tmux` - terminal multiplexer
-- `zsh` - shell
-
-**Applications:**
-- `ghostty` - terminal emulator
-- `sensiblesidebuttons` - mouse button configuration utility
+- `~/.zshrc.d/*.zsh` — drop-in directory for **external generators**. `~/.zshrc`
+  sources every `*.zsh` here. Safe to be empty.

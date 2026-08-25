@@ -221,15 +221,6 @@ Adopting this rather than owning it? Change these before `chezmoi apply`:
 
 ## Day-2 usage (editing this config)
 
-This repo *is* the chezmoi source dir; `dot_*` names map to `~/.*` targets.
-
-```sh
-chezmoi diff              # preview changes to $HOME
-chezmoi apply             # write them
-chezmoi edit ~/.zshrc     # edit a managed file's source
-chezmoi re-add            # pull direct $HOME edits back into the source
-chezmoi cd                # jump into the source dir
-```
-
-Editing the `Brewfile` and running `chezmoi apply` re-runs `brew bundle`
-automatically (keyed on the Brewfile's hash).
+Once the machine is set up, editing this config day-to-day (`chezmoi
+diff`/`apply`/`edit`/`re-add`, and how the `Brewfile` re-runs `brew bundle`) is
+covered in the repo [README](README.md#day-2-usage).
