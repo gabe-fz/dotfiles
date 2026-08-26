@@ -24,6 +24,7 @@ the Ghostty / tmux / Claude Code details.
 - `dot_config/ghostty/config` → `~/.config/ghostty/config`
 - `dot_config/zsh/*.zsh` → `~/.config/zsh/*.zsh` — personal modules (aliases, fzf)
 - `dot_local/bin/*` → `~/.local/bin/*` — personal scripts
+- `dot_claude/executable_statusline.sh` → `~/.claude/statusline.sh` — Claude Code status line (needs `jq`; wired up via `statusLine` in `~/.claude/settings.json`, which is not managed here)
 - `Brewfile` + `run_onchange_brew-bundle.sh.tmpl` — package management (the full tool + app list)
 
 ## Day-2 usage

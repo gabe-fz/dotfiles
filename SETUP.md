@@ -198,15 +198,21 @@ curl -fsSL https://claude.ai/install.sh | bash    # installs to ~/.local/bin/cla
 
 Then reproduce `~/.claude/`:
 
-- **`settings.json`** — model, effort level, theme, MCP servers, plugins, a
-  custom statusline, and lifecycle hooks.
-- **`statusline.sh`** — custom status line (referenced from `settings.json`).
+- **`statusline.sh`** — chezmoi-managed (`dot_claude/executable_statusline.sh`),
+  so `chezmoi apply` installs it executable at `~/.claude/statusline.sh`. It
+  renders one line: folder + git branch, model + effort, context %, and the 5h /
+  weekly usage windows with reset countdowns. Needs `jq` (in the `Brewfile`).
+- **`settings.json`** — NOT managed here (it mixes machine-local and
+  internal-only values). Seed it from the user's backup, then fix any absolute
+  paths inside it to the adopting user's real home/checkout locations.
 
-Seed these from the user's backup, then fix any absolute paths inside
-`settings.json` to the adopting user's real home/checkout locations.
+To wire the statusline in, `settings.json` needs:
+```json
+"statusLine": { "type": "command", "command": "~/.claude/statusline.sh", "padding": 0, "refreshInterval": 10 }
+```
 
-**Verify:** `claude --version` succeeds and `jq -e . ~/.claude/settings.json`
-parses.
+**Verify:** `claude --version` succeeds, `jq -e . ~/.claude/settings.json`
+parses, and `echo '{}' | ~/.claude/statusline.sh` prints a line without erroring.
 
 ---
 
