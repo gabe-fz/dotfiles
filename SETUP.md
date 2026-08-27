@@ -7,7 +7,8 @@ Almost nothing is installed by hand — two files are the source of truth
 (`Brewfile` + the `dot_*` dotfiles); everything else installs from them.
 
 > Internal-only tooling (metamux, the Nexus registry, team packs, work config)
-> lives in a separate companion guide that is not part of this public repo.
+> is covered by `ONBOARDING.md` in the team's internal setup repo — do this
+> public guide first, then that one.
 
 ---
 
