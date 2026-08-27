@@ -227,6 +227,7 @@ Adopting this rather than owning it? Change these before `chezmoi apply`:
 | dotfiles git remote | `git remote -v` in the source dir | your fork's URL |
 | Absolute paths in `~/.claude/settings.json` | hook / statusline commands | your `$HOME` |
 | Secrets | `~/.zshrc.local` | your own tokens |
+| Claude Code statusline | `dot_claude/` | delete the directory from your fork if you don't use Claude Code (it's inert until wired into `settings.json`, so keeping it is harmless too) |
 
 ---
 
