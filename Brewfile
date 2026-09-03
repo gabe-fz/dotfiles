@@ -46,7 +46,6 @@ brew "marp-cli"          # markdown → slides
 cask "ghostty"               # terminal emulator
 cask "sensiblesidebuttons"   # mouse-button config
 cask "visual-studio-code"
-cask "intellij-idea"
 cask "bruno"                 # API client
 cask "mongodb-compass"
 cask "offset-explorer"       # Kafka UI
