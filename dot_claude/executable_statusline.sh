@@ -114,4 +114,17 @@ if [ -n "$five" ] || [ -n "$week" ]; then
   fi
 fi
 
+# --- PR watch: reviewer-attention counts from ~/.ai-sdlc/pr-watch (pr-watch.sh) ---
+pw="$HOME/.ai-sdlc/pr-watch/summary.txt"
+if [ -r "$pw" ]; then
+  pw_line=$(cat "$pw")
+  pw_age=$(( now - $(stat -f %m "$pw" 2>/dev/null || echo "$now") ))
+  if [ -n "$pw_line" ]; then
+    if   [ "$pw_age" -gt 7200 ]; then c="$DIM"        # watcher hasn't run in 2h
+    elif [ "$pw_line" != "PRs r1 0 · r2 0 · vps 0" ]; then c="$YELLOW"
+    else c="$GREEN"; fi
+    out="${out}${sep}${c}⇄ ${pw_line#PRs }${RESET}"
+  fi
+fi
+
 printf '%s' "$out"
