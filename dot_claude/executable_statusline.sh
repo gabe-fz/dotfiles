@@ -114,52 +114,8 @@ if [ -n "$five" ] || [ -n "$week" ]; then
   fi
 fi
 
-# --- PR watch: per-product review counts from ~/.ai-sdlc/pr-watch (gabe-pack pr-watch.sh) ---
-#   ⇄ r1 4↻4 · r2 13 · vps 11↻1 · ra 0 · fp 0 │ me 5
-#   count: dim 0 · yellow waiting · red ↻N = author pushed / re-requested since my review
-#   me: red ✗N changes-requested/ci-failing · green ✓N ready to merge
-#   ⇄! red = last scan partial (counts undercount) · whole segment dim + age = watcher stale
-pw_dir="$HOME/.ai-sdlc/pr-watch"
-pw_tsv="$pw_dir/statusline.tsv"
-if [ -r "$pw_tsv" ]; then
-  pw_age=$(( now - $(stat -f %m "$pw_tsv" 2>/dev/null || echo "$now") ))
-  pw_seg=""; pw_me=""; pw_err=0; pw_any=0
-  while IFS=$'\t' read -r kind label count a b; do
-    case "$kind" in
-      review)
-        if [ "$count" = "0" ]; then item="${DIM}${label} 0${RESET}"
-        else
-          pw_any=1
-          item="${DIM}${label}${RESET} ${YELLOW}${count}${RESET}"
-          [ "${a:-0}" != "0" ] && item="${item}${RED}↻${a}${RESET}"
-        fi
-        pw_seg="${pw_seg:+${pw_seg}${DIM} · ${RESET}}${item}" ;;
-      mine)
-        if [ "$count" = "0" ]; then pw_me="${DIM}${label} 0${RESET}"
-        else
-          pw_any=1
-          pw_me="${DIM}${label}${RESET} ${YELLOW}${count}${RESET}"
-          [ "${a:-0}" != "0" ] && pw_me="${pw_me}${RED}✗${a}${RESET}"
-          [ "${b:-0}" != "0" ] && pw_me="${pw_me}${GREEN}✓${b}${RESET}"
-        fi ;;
-      meta) [ "$label" = "errors" ] && pw_err="${count:-0}" ;;
-    esac
-  done < "$pw_tsv"
-  if [ "$pw_age" -gt 7200 ]; then
-    # watcher stale: strip colors, dim the lot, show the age
-    plain=$(printf '%s' "${pw_seg} │ ${pw_me}" | sed $'s/\033\\[[0-9;]*m//g')
-    out="${out}${sep}${DIM}⇄ ${plain} ⏱$(( pw_age / 3600 ))h${RESET}"
-  elif [ "$pw_any" = "0" ] && [ "$pw_err" = "0" ]; then
-    out="${out}${sep}${GREEN}⇄ all clear${RESET}"
-  else
-    icon="${CYAN}⇄${RESET}"; [ "$pw_err" != "0" ] && icon="${RED}⇄!${RESET}"
-    out="${out}${sep}${icon} ${pw_seg}${pw_me:+${DIM} │ ${RESET}${pw_me}}"
-  fi
-elif [ -r "$pw_dir/summary.txt" ]; then
-  # pre-tsv pr-watch: one-color fallback
-  pw_line=$(cat "$pw_dir/summary.txt")
-  if [[ "$pw_line" == *[1-9]* || "$pw_line" == *[\?\!]* ]]; then c="$YELLOW"; else c="$GREEN"; fi
-  out="${out}${sep}${c}⇄ ${pw_line#PRs }${RESET}"
-fi
+# --- PR watch + relay: moved to the metamux sidebar's `dashboard` section (2026-10-16).
+#   Feeds: ~/.metamux/feeds/{prs,relay}.json, written by pr-watch.sh and the relay watcher.
+#   Previous segments: statusline.sh.bak-20261016-feeds
 
 printf '%s' "$out"
