@@ -98,19 +98,81 @@ if [ -n "$ctx" ]; then
   [ -n "$tk" ] && out="${out} ${DIM}${tk}${RESET}"
 fi
 
-# --- usage limits: percent + reset countdown ---
-if [ -n "$five" ] || [ -n "$week" ]; then
-  out="${out}${sep}"
-  if [ -n "$five" ]; then
-    c=$(pct_color "$five")
-    out="${out}${DIM}5h ${RESET}${c}$(round "$five")%${RESET}"
-    r=$(fmt_reset "$five_at"); [ -n "$r" ] && out="${out} ${DIM}↻${r}${RESET}"
+# --- usage limits: moved to the metamux sidebar's `dashboard` section (2026-11-02).
+#   Feed: ~/.metamux/feeds/claude-limits.json (plugin `claude-limits`), one chip per
+#   window: `5h 24%↻45m  wk 41%↻2d3h`, percent and countdown on separate
+#   red-green gradients (levels below). Tier mirrors pct_color: <70 ok, <90 warn,
+#   else alert. Written only when the chips change (or every 5 min, so `ts` stays
+#   fresh); the write is temp+rename in the feeds dir, which is what wakes the
+#   sidebar. Previous segment: statusline.sh.bak-20261102-limits
+pct_tier() {
+  local v=${1%%.*}
+  if   [ "$v" -ge 90 ]; then printf alert
+  elif [ "$v" -ge 70 ]; then printf warn
+  else                       printf ok
   fi
-  if [ -n "$week" ]; then
-    [ -n "$five" ] && out="${out}${DIM}  ·  ${RESET}"
-    c=$(pct_color "$week")
-    out="${out}${DIM}wk ${RESET}${c}$(round "$week")%${RESET}"
-    r=$(fmt_reset "$week_at"); [ -n "$r" ] && out="${out} ${DIM}↻${r}${RESET}"
+}
+# A 0..1 level from hundredths (integer math, no fork): 0 -> 0.00, 100 -> 1.
+level() {
+  local h=$1
+  [ "$h" -lt 0 ] && h=0; [ "$h" -gt 100 ] && h=100
+  if [ "$h" -ge 100 ]; then printf 1; else printf '0.%02d' "$h"; fi
+}
+# Each half of the chip has its own red-green gradient in the sidebar:
+#   value_level  = used %                       (0% green -> 100% red)
+#   detail_level = share of the window still to wait before the reset
+#                  (reset imminent green -> a whole window away red)
+limits_item() {  # id label pct resets_at window_secs
+  [ -z "$3" ] && return
+  local r pct tl="" left
+  r=$(fmt_reset "$4"); pct=$(round "$3")
+  if [ -n "$4" ]; then
+    left=$(( ${4%%.*} - now )); [ "$left" -lt 0 ] && left=0
+    tl=$(level $(( left * 100 / $5 )))
+  fi
+  printf '{"id":"%s","label":"%s","value":"%s%%","detail":"%s","tier":"%s","value_level":%s%s}' \
+    "$1" "$2" "$pct" "${r:+↻$r}" "$(pct_tier "$3")" "$(level "$pct")" \
+    "${tl:+,\"detail_level\":$tl}"
+}
+# Every Claude session runs this script, each with the limits from ITS OWN last
+# API response -- an idle session reports an older, lower number. So the feed is
+# MERGED, never overwritten: within one window (same reset, ±120s jitter) usage
+# only grows, so the highest wins; a LATER reset means a new window and wins
+# outright; an earlier reset than the stored one is stale and loses. A stored
+# window whose reset has passed yields to whatever arrives.
+merge_window() {  # new_pct new_at old_pct old_at -> "pct<US>at"
+  local np=$1 na=${2%%.*} op=$3 oa=${4%%.*}
+  if [ -z "$np" ] || [ -z "$na" ]; then
+    # nothing new: keep the stored window unless it has already reset
+    if [ -n "$op" ] && [ -n "$oa" ] && [ "$oa" -gt "$now" ]; then printf '%s\037%s' "$op" "$oa"
+    else printf '%s\037%s' "$np" "$na"; fi
+  elif [ -z "$op" ] || [ -z "$oa" ] || [ "$oa" -le "$now" ] || [ "$na" -gt $(( oa + 120 )) ]; then
+    printf '%s\037%s' "$np" "$na"
+  elif [ "$na" -lt $(( oa - 120 )) ]; then
+    printf '%s\037%s' "$op" "$oa"
+  elif [ "${np%%.*}" -ge "${op%%.*}" ]; then
+    printf '%s\037%s' "$np" "$na"
+  else
+    printf '%s\037%s' "$op" "$oa"
+  fi
+}
+if [ -n "$five" ] || [ -n "$week" ]; then
+  fdir="$HOME/.metamux/feeds"; sig="$HOME/.metamux/.claude-limits.sig"
+  last_ts=0 o5="" o5a="" ow="" owa="" last_sig=""
+  [ -r "$sig" ] && IFS=$'\037' read -r last_ts o5 o5a ow owa last_sig <"$sig"
+  IFS=$'\037' read -r five five_at <<<"$(merge_window "$five" "$five_at" "$o5" "$o5a")"
+  IFS=$'\037' read -r week week_at <<<"$(merge_window "$week" "$week_at" "$ow" "$owa")"
+  items=$(limits_item 5h 5h "$five" "$five_at" 18000)
+  w=$(limits_item wk wk "$week" "$week_at" 604800)
+  [ -n "$w" ] && items="${items:+$items,}$w"
+  if [ -n "$items" ] && { [ "$items" != "$last_sig" ] || [ $(( now - ${last_ts:-0} )) -ge 300 ]; }; then
+    mkdir -p "$fdir" 2>/dev/null
+    tmp=$(mktemp "$fdir/.claude-limits.XXXXXX" 2>/dev/null) && {
+      printf '{"v":1,"ts":%s,"stale_after":1800,"items":[%s]}\n' "$now" "$items" >"$tmp" \
+        && mv -f "$tmp" "$fdir/claude-limits.json" \
+        && printf '%s\037%s\037%s\037%s\037%s\037%s\n' "$now" "$five" "$five_at" "$week" "$week_at" "$items" >"$sig" \
+        || rm -f "$tmp"
+    }
   fi
 fi
 
