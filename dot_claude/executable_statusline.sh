@@ -104,7 +104,7 @@ fi
 #   red-green gradients (levels below). Tier mirrors pct_color: <70 ok, <90 warn,
 #   else alert. Written only when the chips change (or every 5 min, so `ts` stays
 #   fresh); the write is temp+rename in the feeds dir, which is what wakes the
-#   sidebar. Previous segment: statusline.sh.bak-20261102-limits
+#   sidebar. Previous segment: dotfiles history (f50f5ff)
 pct_tier() {
   local v=${1%%.*}
   if   [ "$v" -ge 90 ]; then printf alert
@@ -178,6 +178,6 @@ fi
 
 # --- PR watch + relay: moved to the metamux sidebar's `dashboard` section (2026-10-16).
 #   Feeds: ~/.metamux/feeds/{prs,relay}.json, written by pr-watch.sh and the relay watcher.
-#   Previous segments: statusline.sh.bak-20261016-feeds
+#   Previous segments: dotfiles history (31416c8)
 
 printf '%s' "$out"
