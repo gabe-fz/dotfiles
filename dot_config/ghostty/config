@@ -2,8 +2,8 @@
 # Note: ~/Library/Application Support/com.mitchellh.ghostty/config is ALSO
 # read (after this file, so it wins on conflicts) — keep everything here.
 
-# Shift+Enter → ESC+CR: Claude Code (and most readline-style TUIs) treat
-# Meta+Enter as "insert newline" instead of "submit". A terminal-level
-# keybind works identically inside and outside tmux, so Shift+Enter always
-# means newline regardless of what tmux does to modified keys.
-keybind = shift+enter=text:\x1b\r
+# No Shift+Enter keybind on purpose. Ghostty reports a real Shift+Enter
+# (kitty / CSI-u) and tmux forwards it as \e[13;2u (extended-keys csi-u in
+# ~/.tmux.conf), so Claude Code and pi both see Shift+Enter = newline. The old
+# `shift+enter=text:\x1b\r` rewrite sent Alt+Enter, which pi binds to
+# "queue follow-up", so Shift+Enter never inserted a newline there.
