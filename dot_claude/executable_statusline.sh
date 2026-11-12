@@ -76,11 +76,31 @@ fmt_reset() {
 
 sep="${DIM}  │  ${RESET}"
 
-# --- workspace folder + current git branch ---
+# --- what this session was opened for, from the launcher's environment (the status
+#   line inherits Claude's env). gabe-pr (prs menu, claude-session.sh):
+#   GABE_PR_SESSION_{NAME,PRODUCT,REPO,TASK} -> `⇄ prs vps · review vps-pricing-service#103`.
+#   nextup take / menu: NEXTUP_{TEAM,ROLE,ACTION,ITEM,PART,PACKET} ->
+#   `▶ vss/dev · review ADR:0002 P1`, or for a packet `▶ apf/architect · packet 4 · reverify`.
 out=""
+if [ -n "${GABE_PR_SESSION_NAME:-}" ]; then
+  out="${YELLOW}⇄ prs${GABE_PR_SESSION_PRODUCT:+ $GABE_PR_SESSION_PRODUCT}${RESET}"
+  [ -n "${GABE_PR_SESSION_TASK:-}" ] && out="${out} ${DIM}·${RESET} ${GABE_PR_SESSION_TASK}"
+  out="${out}${sep}"
+elif [ -n "${NEXTUP_PACK_DIR:-}" ]; then
+  out="${YELLOW}▶ ${NEXTUP_TEAM:-nextup}${NEXTUP_ROLE:+/$NEXTUP_ROLE}${RESET}"
+  if [ -n "${NEXTUP_TURN_ID:-}" ]; then
+    out="${out} ${DIM}·${RESET} ${NEXTUP_ACTION}${NEXTUP_ITEM:+ $NEXTUP_ITEM}${NEXTUP_PART:+ $NEXTUP_PART}"
+  elif [ -n "${NEXTUP_PACKET:-}" ] && [ -r "$NEXTUP_PACKET" ]; then
+    pk=$(jq -r '(.turns // []) | "packet \(length) · \(map(.id | split("/") | last) | unique | join(","))"' "$NEXTUP_PACKET" 2>/dev/null)
+    [ -n "$pk" ] && out="${out} ${DIM}·${RESET} ${pk}"
+  fi
+  out="${out}${sep}"
+fi
+
+# --- workspace folder + current git branch ---
 if [ -n "$dir" ]; then
   folder=$(basename "$dir")
-  out="${BLUE}📁 ${folder}${RESET}"
+  out="${out}${BLUE}📁 ${folder}${RESET}"
   branch=$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null)
   [ -n "$branch" ] && out="${out} ${DIM}⎇ ${RESET}${GREEN}${branch}${RESET}"
   out="${out}${sep}"
