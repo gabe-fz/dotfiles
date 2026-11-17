@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""tmux-snapshot — save live tmux sessions as tmuxp workspace files.
+
+Replaces muxrail's saved profiles. Writes ~/.config/tmuxp/<session>.yaml for
+each session (or only the sessions named on the command line), recording each
+window's name, directory, panes and an approximate split layout. workmux
+sidebar panes are skipped, so the restored windows contain only your panes
+(the workmux sidebar re-attaches itself if it's on).
+
+    tmux-snapshot              # snapshot every session
+    tmux-snapshot gear5 labs   # only these sessions
+    tmuxp load gear5           # restore one later (-d to stay detached)
+
+Pane commands are not restored, only directories, so agents aren't relaunched.
+"""
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+SKIP_CMDS = {"workmux"}
+# Auto-rename leftovers that say nothing about the window.
+VAGUE_NAMES = {"muxrail", "workmux", "zsh", "bash", "node", "python", "Python"}
+OUT = Path.home() / ".config" / "tmuxp"
+HOME = str(Path.home())
+
+FMT = "\t".join([
+    "#{session_name}", "#{window_index}", "#{window_name}", "#{pane_index}",
+    "#{pane_current_command}", "#{pane_current_path}",
+    "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
+])
+
+
+def tmux(*args):
+    return subprocess.run(["tmux", *args], check=True, capture_output=True, text=True).stdout
+
+
+def tilde(path):
+    return "~" + path[len(HOME):] if path == HOME or path.startswith(HOME + "/") else path
+
+
+def layout(panes):
+    """Map pane geometry to a tmux preset; keep the first pane's share."""
+    if len(panes) == 1:
+        return None, {}
+    lefts = {p["left"] for p in panes}
+    tops = {p["top"] for p in panes}
+    if len(tops) == 1:  # side by side
+        total = sum(p["width"] for p in panes)
+        pct = round(100 * panes[0]["width"] / total)
+        return ("main-vertical", {"main-pane-width": f"{pct}%"}) if len(panes) == 2 else ("even-horizontal", {})
+    if len(lefts) == 1:  # stacked
+        total = sum(p["height"] for p in panes)
+        pct = round(100 * panes[0]["height"] / total)
+        return ("main-horizontal", {"main-pane-height": f"{pct}%"}) if len(panes) == 2 else ("even-vertical", {})
+    return "tiled", {}
+
+
+def q(s):
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def main(wanted):
+    sessions = {}
+    for line in tmux("list-panes", "-a", "-F", FMT).splitlines():
+        s, wi, wname, pi, cmd, path, left, top, w, h = line.split("\t")
+        if cmd in SKIP_CMDS:
+            continue
+        if wanted and s not in wanted:
+            continue
+        win = sessions.setdefault(s, {}).setdefault(int(wi), {"name": wname, "panes": []})
+        win["panes"].append({"index": int(pi), "path": path, "left": int(left),
+                             "top": int(top), "width": int(w), "height": int(h)})
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    for s, windows in sessions.items():
+        lines = [f"# Saved by tmux-snapshot. Restore: tmuxp load {s}", f"session_name: {q(s)}", "windows:"]
+        for wi in sorted(windows):
+            win = windows[wi]
+            panes = sorted(win["panes"], key=lambda p: (p["top"], p["left"]))
+            root = panes[0]["path"]
+            name = win["name"]
+            if name in VAGUE_NAMES or name[:1].isdigit():
+                name = os.path.basename(root) or name
+            lines += [f"  - window_name: {q(name)}", f"    start_directory: {q(tilde(root))}"]
+            lay, opts = layout(panes)
+            if lay:
+                lines.append(f"    layout: {lay}")
+            if opts:
+                lines.append("    options:")
+                lines += [f"      {k}: {q(v)}" for k, v in opts.items()]
+            lines.append("    panes:")
+            for p in panes:
+                lines += ["      - shell_command: []", f"        start_directory: {q(tilde(p['path']))}"]
+        (OUT / f"{s}.yaml").write_text("\n".join(lines) + "\n")
+        print(f"saved {OUT / (s + '.yaml')} ({len(windows)} windows)")
+
+
+if __name__ == "__main__":
+    main(set(sys.argv[1:]))

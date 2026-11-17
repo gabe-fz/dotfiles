@@ -1,0 +1,18 @@
+# Global workmux config. Sidebar styled to resemble the old muxrail rail:
+# agents grouped by tmux session, compact rows, ordered by window.
+theme:
+  scheme: night-sorbet
+  mode: dark
+
+sidebar:
+  position: left
+  width: 32
+  layout: compact
+  sort: window
+  group_by: session
+  enter_action: focus
+  dim_stale: false
+  collapse_stale: false
+  templates:
+    grouped:
+      header: "# {group} {fill} {group_count}"

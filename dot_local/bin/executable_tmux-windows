@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# tmux-windows — fuzzy window manager for every tmux session (fzf popup).
+#
+# Replaces muxrail's "Find" + window actions; runs alongside the workmux agent
+# sidebar. Bound to `prefix f` in ~/.tmux.conf (opens in a display-popup).
+#
+#   enter   switch to the window
+#   ctrl-r  rename the window
+#   ctrl-x  close the window (asks first)
+#   ctrl-n  new window in the selected window's session and directory
+#
+# workmux sidebar panes are ignored when listing a window's command.
+set -euo pipefail
+
+list() {
+  # session:index <TAB> session  name  [commands]  path
+  tmux list-windows -a -F '#{session_name}:#{window_index}	#{session_name}	#{window_name}	#{window_active}#{session_attached}	#{pane_current_path}' |
+    while IFS=$'\t' read -r target session name flags path; do
+      cmds=$(tmux list-panes -t "$target" -F '#{pane_current_command}' | grep -v '^workmux$' | sort -u | paste -sd, -)
+      marker=" "
+      [[ $flags == 11 ]] && marker="▸"
+      printf '%s\t%s %-10s %-18s %-22s %s\n' "$target" "$marker" "#$session" "$name" "[$cmds]" "${path/#$HOME/~}"
+    done
+}
+
+if [[ ${1:-} == --list ]]; then list; exit; fi
+
+self=$(command -v "$0" || echo "$0")
+
+list | fzf \
+  --ansi --delimiter=$'\t' --with-nth=2 --no-sort --reverse \
+  --prompt='window> ' \
+  --header='enter switch · ^r rename · ^x close · ^n new' \
+  --preview='tmux capture-pane -ep -t {1}' --preview-window='down,50%' \
+  --bind="ctrl-r:execute(printf 'rename %s to: ' {1}; read -r n </dev/tty; [ -n \"\$n\" ] && tmux rename-window -t {1} \"\$n\")+reload($self --list)" \
+  --bind="ctrl-x:execute(printf 'close %s? [y/N] ' {1}; read -r a </dev/tty; [ \"\$a\" = y ] && tmux kill-window -t {1})+reload($self --list)" \
+  --bind="ctrl-n:execute(tmux new-window -d -t {1} -a -c \"\$(tmux display -p -t {1} '#{pane_current_path}')\")+reload($self --list)" |
+  cut -f1 |
+  {
+    read -r target || exit 0
+    tmux switch-client -t "${target%%:*}" \; select-window -t "$target"
+  }

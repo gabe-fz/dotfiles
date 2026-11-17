@@ -1,0 +1,8 @@
+# Saved by tmux-snapshot. Restore: tmuxp load agents
+session_name: "agents"
+windows:
+  - window_name: "final"
+    start_directory: "~"
+    panes:
+      - shell_command: []
+        start_directory: "~"

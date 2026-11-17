@@ -1,0 +1,13 @@
+# Saved by tmux-snapshot. Restore: tmuxp load labs
+session_name: "labs"
+windows:
+  - window_name: "sandbox"
+    start_directory: "~/repos"
+    layout: main-horizontal
+    options:
+      main-pane-height: "36%"
+    panes:
+      - shell_command: []
+        start_directory: "~/repos"
+      - shell_command: []
+        start_directory: "~/repos"
