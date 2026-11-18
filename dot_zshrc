@@ -1,6 +1,8 @@
 # 1. environment (before anything can init zle)
 export EDITOR='vi'
 export PATH="$HOME/.local/bin:$PATH"
+export OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true
+export OPENCODE_ENABLE_EXA=1
 
 # 2. keymap — explicit, never inferred from $EDITOR
 bindkey -e
@@ -24,3 +26,8 @@ command -v starship >/dev/null && eval "$(starship init zsh)"
 
 # 8. VS Code shell integration
 [[ "$TERM_PROGRAM" == "vscode" ]] && . "$(code --locate-shell-integration-path zsh)"
+
+# BikeTrack local launchd operations (jobs are not installed by this file).
+alias biketrack-setup='/Users/final/repos/biketrack/ops/launchd/biketrack-launchd.zsh setup'
+alias biketrack-status='/Users/final/repos/biketrack/ops/launchd/biketrack-launchd.zsh status'
+alias biketrack-backup='/Users/final/repos/biketrack/ops/launchd/biketrack-launchd.zsh backup'
