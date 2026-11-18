@@ -7,3 +7,8 @@
 # ~/.tmux.conf), so Claude Code and pi both see Shift+Enter = newline. The old
 # `shift+enter=text:\x1b\r` rewrite sent Alt+Enter, which pi binds to
 # "queue follow-up", so Shift+Enter never inserted a newline there.
+
+# Forward Shift-click to mouse-aware applications for range selection.
+# This applies to all mouse-aware terminal apps, including those inside tmux.
+mouse-shift-capture = true
+link-url = true
