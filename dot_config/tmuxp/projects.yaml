@@ -1,8 +1,0 @@
-# Saved by tmux-snapshot. Restore: tmuxp load projects
-session_name: "projects"
-windows:
-  - window_name: "steiner"
-    start_directory: "~/repos/steiner"
-    panes:
-      - shell_command: []
-        start_directory: "~/repos/steiner"
