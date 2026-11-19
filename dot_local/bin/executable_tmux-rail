@@ -1,0 +1,422 @@
+#!/usr/bin/env python3
+"""tmux-rail — left sidebar: workmux agents + every tmux session/window.
+
+Replaces workmux's own sidebar pane (and muxrail before it). workmux still
+tracks agents; this reads them from `workmux status --all --json` and lists
+them above all sessions and windows, muxrail-style.
+
+    tmux-rail run       the sidebar UI (runs inside each rail pane)
+    tmux-rail sync      add/remove/resize rail panes in every window (hooks)
+    tmux-rail on|off|toggle
+
+Rail panes carry the pane option @rail_role=rail. The global option
+@rail_enabled (default on) decides whether `sync` keeps them.
+
+Keys in the rail:
+    j/k ↑/↓  move          enter/click  switch to window / agent pane
+    r        rename window x            close window (asks)
+    n        new window    /            fuzzy window picker (tmux-windows)
+    a / w    fold agents / windows      S  snapshot sessions (tmuxp)
+"""
+import curses
+import fcntl
+import hashlib
+import json
+import os
+import subprocess
+import sys
+import time
+
+WIDTH = 32
+ROLE = "@rail_role"
+SELF = os.path.abspath(__file__)
+PICKER = os.path.expanduser("~/.local/bin/tmux-windows")
+SNAPSHOT = os.path.expanduser("~/.local/bin/tmux-snapshot")
+SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def tmux(*args, check=False):
+    r = subprocess.run(["tmux", *args], capture_output=True, text=True)
+    if check and r.returncode:
+        raise RuntimeError(r.stderr.strip())
+    return r.stdout
+
+
+# --------------------------------------------------------------------- sync
+def enabled():
+    return tmux("show", "-gqv", "@rail_enabled").strip() != "0"
+
+
+def sync():
+    # Hooks fire in bursts and run concurrently; serialise per tmux server.
+    sock = os.environ.get("TMUX", "default").split(",")[0]
+    lock = f"/tmp/tmux-rail-{os.getuid()}-{hashlib.md5(sock.encode()).hexdigest()[:8]}.lock"
+    with open(lock, "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        _sync()
+
+
+def _sync():
+    rows = tmux("list-panes", "-a", "-F",
+                "#{window_id}\t#{pane_id}\t#{" + ROLE + "}\t#{pane_width}\t#{pane_dead}").splitlines()
+    windows = {}
+    for row in rows:
+        wid, pid, role, width, dead = row.split("\t")
+        w = windows.setdefault(wid, {"rails": [], "others": []})
+        (w["rails"] if role == "rail" else w["others"]).append((pid, int(width)))
+    on = enabled()
+    for wid, w in windows.items():
+        rails, others = w["rails"], w["others"]
+        if not others:  # only the rail is left: the window's real work is gone
+            if rails:
+                tmux("kill-window", "-t", wid)
+            continue
+        if not on:
+            for pid, _ in rails:
+                tmux("kill-pane", "-t", pid)
+            continue
+        for pid, _ in rails[1:]:
+            tmux("kill-pane", "-t", pid)
+        if not rails:
+            new = tmux("split-window", "-hbfd", "-l", str(WIDTH), "-t", others[0][0],
+                       "-P", "-F", "#{pane_id}", f"exec {SELF} run").strip()
+            if new:
+                tmux("set", "-p", "-t", new, ROLE, "rail")
+                tmux("select-pane", "-t", new, "-T", "rail")
+        elif rails[0][1] != WIDTH:
+            tmux("resize-pane", "-t", rails[0][0], "-x", str(WIDTH))
+
+
+def set_enabled(value):
+    tmux("set", "-g", "@rail_enabled", value)
+    sync()
+
+
+# ----------------------------------------------------------------------- UI
+def fmt_elapsed(s):
+    if s is None:
+        return ""
+    s = int(s)
+    if s < 3600:
+        return f"{s // 60}:{s % 60:02d}"
+    if s < 86400:
+        return f"{s // 3600}h{(s % 3600) // 60:02d}"
+    return f"{s // 86400}d{(s % 86400) // 3600}h"
+
+
+class Rail:
+    def __init__(self, scr):
+        self.scr = scr
+        self.pane = os.environ.get("TMUX_PANE", "")
+        self.sel = 0
+        self.top = 0
+        self.fold = {"agents": False, "windows": False}
+        self.agents, self.windows = [], []
+        self.items = []
+        self.last_agents = 0
+        self.tick = 0
+        self.msg = ""
+        curses.curs_set(0)
+        curses.use_default_colors()
+        curses.mousemask(curses.ALL_MOUSE_EVENTS | curses.REPORT_MOUSE_POSITION)
+        curses.mouseinterval(0)
+        scr.timeout(1000)
+        pal = [183, 114, 216, 211, 117, 222, 152, 175]
+        for i, c in enumerate(pal, start=1):
+            curses.init_pair(i, c, -1)
+        curses.init_pair(20, 245, -1)  # dim
+        curses.init_pair(21, 234, 114)  # current window badge
+        curses.init_pair(22, 183, 236)  # selection
+        self.npal = len(pal)
+
+    # data
+    def own(self):
+        out = tmux("display", "-p", "-t", self.pane, "#{session_name}\t#{window_id}").strip().split("\t")
+        return (out + ["", ""])[:2]
+
+    def refresh_data(self):
+        rows = tmux("list-windows", "-a", "-F",
+                    "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}\t#{@workmux_status}").splitlines()
+        self.windows = [r.split("\t") for r in rows]
+        if time.time() - self.last_agents > 2:
+            self.last_agents = time.time()
+            try:
+                out = subprocess.run(["workmux", "status", "--all", "--json"],
+                                     capture_output=True, text=True, timeout=5).stdout
+                self.agents = json.loads(out).get("agents", [])
+            except Exception:
+                self.agents = []
+
+    def color(self, session):
+        order = []
+        for s, *_ in self.windows:
+            if s not in order:
+                order.append(s)
+        i = order.index(session) if session in order else 0
+        return curses.color_pair(1 + i % self.npal)
+
+    def build(self):
+        own_session, own_window = self.own()
+        items = [("title", None)]
+        items.append(("section", "agents"))
+        if not self.fold["agents"]:
+            if not self.agents:
+                items.append(("note", "no tracked agents"))
+            for a in sorted(self.agents, key=lambda a: (a.get("session") or "", a.get("window_name") or "")):
+                items.append(("agent", a))
+        items.append(("blank", None))
+        items.append(("section", "windows"))
+        if not self.fold["windows"]:
+            last = None
+            for s, wid, idx, name, wstat in self.windows:
+                if s != last:
+                    if last is not None:
+                        items.append(("blank", None))
+                    items.append(("session", s))
+                    last = s
+                items.append(("window", (s, wid, idx, name, wstat, wid == own_window)))
+        self.items = items
+        self.selectable = [i for i, (k, _) in enumerate(items) if k in ("agent", "window", "session")]
+        if self.selectable:
+            if self.sel not in self.selectable:
+                self.sel = min(self.selectable, key=lambda i: abs(i - self.sel))
+        else:
+            self.sel = 0
+
+    # draw
+    def put(self, y, x, text, attr=0):
+        h, w = self.scr.getmaxyx()
+        if 0 <= y < h and x < w:
+            try:
+                self.scr.addnstr(y, x, text, max(0, w - x - 1), attr)
+            except curses.error:
+                pass
+
+    def draw(self):
+        self.scr.erase()
+        h, w = self.scr.getmaxyx()
+        if self.sel < self.top:
+            self.top = self.sel
+        if self.sel >= self.top + h - 1:
+            self.top = self.sel - h + 2
+        dim = curses.color_pair(20)
+        for row, i in enumerate(range(self.top, min(len(self.items), self.top + h - 1))):
+            kind, data = self.items[i]
+            selected = i == self.sel
+            base = curses.color_pair(22) if selected else 0
+            if selected:
+                self.put(row, 0, " " * (w - 1), base)
+            if kind == "title":
+                self.put(row, 1, "RAIL", curses.color_pair(1) | curses.A_BOLD)
+                self.put(row, w - 10, "[/] Find", dim)
+            elif kind == "section":
+                arrow = "▸" if self.fold[data] else "▾"
+                self.put(row, 1, f"{arrow} {data.upper()}", dim | curses.A_BOLD)
+            elif kind == "note":
+                self.put(row, 3, data, dim)
+            elif kind == "agent":
+                st = data.get("status")
+                icon = {"working": SPIN[self.tick % len(SPIN)], "waiting": "?", "done": "✓"}.get(st, "○")
+                s = data.get("session") or ""
+                label = f"#{s} {data.get('window_name') or ''}"
+                el = fmt_elapsed(data.get("elapsed_secs"))
+                attr = self.color(s) | (curses.A_BOLD if st == "waiting" else 0)
+                if selected:
+                    attr = base | curses.A_BOLD
+                self.put(row, 1, icon, attr)
+                self.put(row, 3, label[: w - 4 - len(el) - 1], attr)
+                self.put(row, w - 1 - len(el) - 1, el, dim if not selected else base)
+            elif kind == "session":
+                attr = (base | curses.A_BOLD) if selected else (self.color(data) | curses.A_BOLD)
+                self.put(row, 1, f"# {data}", attr)
+            elif kind == "window":
+                s, wid, idx, name, wstat, current = data
+                text = f"{idx} {name}" + (f" {wstat}" if wstat else "")
+                if current:
+                    self.put(row, 1, "▸", curses.color_pair(2) | curses.A_BOLD)
+                    attr = curses.color_pair(2) | curses.A_BOLD
+                else:
+                    attr = self.color(s)
+                if selected:
+                    attr = base | curses.A_BOLD
+                self.put(row, 3, text, attr)
+            elif kind == "blank":
+                pass
+        if self.msg:
+            self.put(h - 1, 1, self.msg, dim)
+        else:
+            self.put(h - 1, 1, "⏎ go r ren x close n new", dim)
+        self.scr.refresh()
+
+    # actions
+    def client(self):
+        s, _ = self.own()
+        rows = tmux("list-clients", "-t", s, "-F", "#{client_activity}\t#{client_name}").splitlines()
+        rows.sort(reverse=True)
+        return rows[0].split("\t")[1] if rows else None
+
+    def goto(self, target_session, target):
+        c = self.client()
+        args = ["switch-client"] + (["-c", c] if c else []) + ["-t", target_session]
+        tmux(*args, ";", "select-window", "-t", target)
+
+    def current(self):
+        return self.items[self.sel] if self.items else (None, None)
+
+    def activate(self):
+        kind, d = self.current()
+        if kind == "window":
+            self.goto(d[0], d[1])
+        elif kind == "session":
+            self.goto(d, d + ":")
+        elif kind == "agent":
+            pane = d.get("pane_id")
+            if pane:
+                self.goto(d.get("session") or "", pane)
+                tmux("select-pane", "-t", pane)
+
+    def target_window(self):
+        kind, d = self.current()
+        if kind == "window":
+            return d[1], d[3]
+        if kind == "agent" and d.get("pane_id"):
+            return tmux("display", "-p", "-t", d["pane_id"], "#{window_id}").strip(), d.get("window_name") or ""
+        return None, None
+
+    def prompt(self, label):
+        h, w = self.scr.getmaxyx()
+        self.put(h - 1, 0, " " * (w - 1))
+        self.put(h - 1, 1, label)
+        curses.echo()
+        curses.curs_set(1)
+        self.scr.timeout(-1)
+        try:
+            raw = self.scr.getstr(h - 1, 1 + len(label), max(1, w - len(label) - 3))
+            return raw.decode("utf-8", "replace").strip()
+        except Exception:
+            return ""
+        finally:
+            curses.noecho()
+            curses.curs_set(0)
+            self.scr.timeout(1000)
+
+    def rename(self):
+        wid, name = self.target_window()
+        if not wid:
+            return
+        new = self.prompt("name: ")
+        if new:
+            tmux("rename-window", "-t", wid, new)
+
+    def close(self):
+        wid, name = self.target_window()
+        if not wid:
+            return
+        if self.prompt(f"close {name}? y/N ").lower() == "y":
+            tmux("kill-window", "-t", wid)
+
+    def new(self):
+        kind, d = self.current()
+        s = d[0] if kind == "window" else d if kind == "session" else (d or {}).get("session") if kind == "agent" else None
+        s = s or self.own()[0]
+        path = tmux("display", "-p", "-t", f"{s}:", "#{pane_current_path}").strip() or os.path.expanduser("~")
+        wid = tmux("new-window", "-d", "-t", f"{s}:", "-c", path, "-P", "-F", "#{window_id}").strip()
+        if wid:
+            self.goto(s, wid)
+
+    def click(self, my):
+        i = self.top + my
+        if 0 <= i < len(self.items):
+            kind, d = self.items[i]
+            if kind == "section":
+                self.fold[d] = not self.fold[d]
+            elif kind == "title":
+                self.picker()
+            elif i in self.selectable:
+                self.sel = i
+                self.activate()
+
+    def picker(self):
+        c = self.client()
+        tmux("display-popup", *(["-c", c] if c else []), "-E", "-w", "85%", "-h", "80%",
+             "-T", " windows ", PICKER)
+
+    def move(self, step):
+        if not self.selectable:
+            return
+        pos = self.selectable.index(self.sel) if self.sel in self.selectable else 0
+        self.sel = self.selectable[max(0, min(len(self.selectable) - 1, pos + step))]
+
+    def loop(self):
+        while True:
+            self.refresh_data()
+            self.build()
+            self.draw()
+            self.tick += 1
+            k = self.scr.getch()
+            if k == -1:
+                self.msg = ""
+                continue
+            self.msg = ""
+            if k in (curses.KEY_DOWN, ord("j")):
+                self.move(1)
+            elif k in (curses.KEY_UP, ord("k")):
+                self.move(-1)
+            elif k in (10, 13, curses.KEY_ENTER, ord("o")):
+                self.activate()
+            elif k == ord("r"):
+                self.rename()
+            elif k == ord("x"):
+                self.close()
+            elif k == ord("n"):
+                self.new()
+            elif k == ord("/"):
+                self.picker()
+            elif k == ord("a"):
+                self.fold["agents"] = not self.fold["agents"]
+            elif k == ord("w"):
+                self.fold["windows"] = not self.fold["windows"]
+            elif k == ord("S"):
+                subprocess.run([SNAPSHOT], capture_output=True)
+                self.msg = "sessions saved (tmuxp)"
+            elif k == ord("g"):
+                self.sel = self.selectable[0] if self.selectable else 0
+            elif k == ord("G"):
+                self.sel = self.selectable[-1] if self.selectable else 0
+            elif k == curses.KEY_MOUSE:
+                try:
+                    _, mx, my, _, bstate = curses.getmouse()
+                except curses.error:
+                    continue
+                if bstate & curses.BUTTON1_PRESSED or bstate & curses.BUTTON1_CLICKED:
+                    self.click(my)
+                elif bstate & getattr(curses, "BUTTON4_PRESSED", 0):
+                    self.move(-1)
+                elif bstate & getattr(curses, "BUTTON5_PRESSED", 0):
+                    self.move(1)
+
+
+def run():
+    os.environ.setdefault("ESCDELAY", "25")
+    curses.wrapper(lambda scr: Rail(scr).loop())
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "run"
+    if cmd == "run":
+        run()
+    elif cmd == "sync":
+        sync()
+    elif cmd == "on":
+        set_enabled("1")
+    elif cmd == "off":
+        set_enabled("0")
+    elif cmd == "toggle":
+        set_enabled("0" if enabled() else "1")
+    else:
+        print(__doc__)
+        sys.exit(2)
+
+
+if __name__ == "__main__":
+    main()

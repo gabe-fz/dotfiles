@@ -1,6 +1,6 @@
-# Global workmux config. Sidebar styled to resemble the old muxrail rail:
-# agents grouped by tmux session, compact rows, ordered by window. Each row
-# shows the agent's window number and name, mirroring the tmux status bar.
+# Global workmux config. workmux tracks agent status; its own sidebar is kept
+# off and tmux-rail (~/.local/bin/tmux-rail) shows agents + windows instead.
+# The sidebar settings below only apply if you run `workmux sidebar on`.
 theme:
   scheme: night-sorbet
   mode: dark

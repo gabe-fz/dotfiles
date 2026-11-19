@@ -3,9 +3,8 @@
 
 Replaces muxrail's saved profiles. Writes ~/.config/tmuxp/<session>.yaml for
 each session (or only the sessions named on the command line), recording each
-window's name, directory, panes and an approximate split layout. workmux
-sidebar panes are skipped, so the restored windows contain only your panes
-(the workmux sidebar re-attaches itself if it's on).
+window's name, directory, panes and an approximate split layout. Sidebar
+panes (tmux-rail, workmux) are skipped; the rail re-attaches itself on load.
 
     tmux-snapshot              # snapshot every session
     tmux-snapshot gear5 labs   # only these sessions
@@ -18,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-SKIP_CMDS = {"workmux"}
+SKIP_CMDS = {"workmux", "rail"}  # sidebar panes
 # Auto-rename leftovers that say nothing about the window.
 VAGUE_NAMES = {"muxrail", "workmux", "zsh", "bash", "node", "python", "Python"}
 OUT = Path.home() / ".config" / "tmuxp"
@@ -26,7 +25,7 @@ HOME = str(Path.home())
 
 FMT = "\t".join([
     "#{session_name}", "#{window_index}", "#{window_name}", "#{pane_index}",
-    "#{pane_current_command}", "#{pane_current_path}",
+    "#{?#{@rail_role},rail,#{pane_current_command}}", "#{pane_current_path}",
     "#{pane_left}", "#{pane_top}", "#{pane_width}", "#{pane_height}",
 ])
 
