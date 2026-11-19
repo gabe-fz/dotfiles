@@ -463,7 +463,7 @@ class Possum:
             rows = [
                 (f"Switch to {name}", "Enter", f"switch-client -t {q(s)} ; select-window -t {wid}"),
                 ("Rename…", "r", f"command-prompt -I {q(name)} -p {q('rename window:')} \"rename-window -t {wid} -- '%%'\""),
-                ("New window after", "n", f"new-window -a -t {wid} -c {q(path_of(wid))}"),
+                ("New window after", "n", f"new-window -a -t {wid} -c {q(path_of(wid))} ; switch-client -t {q(s)}"),
             ]
             if pos > 0:
                 rows.append(("Move up", "u", f"swap-window -d -s {wid} -t {same[pos - 1][1]}"))
@@ -479,7 +479,8 @@ class Possum:
             return f" # {s} ", [
                 (f"Switch to {s}", "Enter", f"switch-client -t {q(s)}"),
                 ("Rename session…", "r", f"command-prompt -I {q(s)} -p {q('rename session:')} \"rename-session -t {q(s)} -- '%%'\""),
-                ("New window", "n", f"new-window -t {q(s + ':')} -c {q(path_of(s + ':'))}"),
+                # new-window in another session doesn't move the client: switch after.
+                ("New window", "n", f"new-window -t {q(s + ':')} -c {q(path_of(s + ':'))} ; switch-client -t {q(s)}"),
                 ("",),
                 ("Save session (tmuxp)", "S", f"run-shell -b {q(snap + ' ' + s)}"),
                 ("",),
