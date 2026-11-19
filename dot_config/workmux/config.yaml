@@ -1,5 +1,6 @@
 # Global workmux config. Sidebar styled to resemble the old muxrail rail:
-# agents grouped by tmux session, compact rows, ordered by window.
+# agents grouped by tmux session, compact rows, ordered by window. Each row
+# shows the agent's window number and name, mirroring the tmux status bar.
 theme:
   scheme: night-sorbet
   mode: dark
@@ -14,5 +15,6 @@ sidebar:
   dim_stale: false
   collapse_stale: false
   templates:
+    compact: "{status_icon} #[fg=#7a8099]{window_index}#[default] {window} {pane_suffix} {fill} {elapsed}"
     grouped:
-      header: "# {group} {fill} {group_count}"
+      header: "#[fg=#c0a6f0,bold]# {group}#[default] {fill} {group_count}"
