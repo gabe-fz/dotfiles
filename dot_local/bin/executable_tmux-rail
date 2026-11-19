@@ -9,6 +9,14 @@ them above all sessions and windows, muxrail-style.
     tmux-rail sync      add/remove/resize rail panes in every window (hooks)
     tmux-rail on|off|toggle
 
+Sessions (saved as tmuxp files in ~/.config/tmuxp, auto-saved every minute):
+    tmux-rail ls                 running and saved sessions
+    tmux-rail save [name...]     save sessions now (all by default)
+    tmux-rail open <name>        switch to it; restore it if closed; else create
+    tmux-rail close <name>       save, then close it (reopen with `open`)
+    tmux-rail forget <name>      close it and delete its saved file
+    tmux-rail restore            reopen every saved session that isn't running
+
 Rail panes carry the pane option @rail_role=rail. The global option
 @rail_enabled (default on) decides whether `sync` keeps them.
 
@@ -93,6 +101,76 @@ def set_enabled(value):
     sync()
 
 
+# ----------------------------------------------------------------- sessions
+SAVED = os.path.expanduser("~/.config/tmuxp")
+
+
+def running():
+    return [l for l in tmux("list-sessions", "-F", "#{session_name}").splitlines() if l]
+
+
+def saved():
+    try:
+        return sorted(f[:-5] for f in os.listdir(SAVED) if f.endswith(".yaml"))
+    except FileNotFoundError:
+        return []
+
+
+def save(*names):
+    subprocess.run([SNAPSHOT, *names], capture_output=True)
+
+
+def tmuxp_load(path):
+    # tmuxp doesn't follow $TMUX; point it at this tmux server explicitly.
+    sock = os.environ.get("TMUX", "").split(",")[0]
+    subprocess.run(["tmuxp", "load", "-d", "-y", *(["-S", sock] if sock else []), path],
+                   capture_output=True)
+
+
+def switch(name):
+    if os.environ.get("TMUX"):
+        tmux("switch-client", "-t", f"={name}")
+
+
+def open_session(name):
+    if name not in running():
+        path = os.path.join(SAVED, f"{name}.yaml")
+        if os.path.exists(path):
+            tmuxp_load(path)
+        else:
+            tmux("new-session", "-d", "-s", name, "-c", os.path.expanduser("~"))
+    switch(name)
+
+
+def close_session(name):
+    if name in running():
+        save(name)
+        tmux("kill-session", "-t", f"={name}")
+
+
+def forget_session(name):
+    if name in running():
+        tmux("kill-session", "-t", f"={name}")
+    try:
+        os.remove(os.path.join(SAVED, f"{name}.yaml"))
+    except FileNotFoundError:
+        pass
+
+
+def restore():
+    live = running()
+    for name in saved():
+        if name not in live:
+            tmuxp_load(os.path.join(SAVED, f"{name}.yaml"))
+
+
+def ls():
+    live = running()
+    for name in sorted(set(live) | set(saved())):
+        state = "running" if name in live else "closed"
+        print(f"{name:20} {state}{'' if name in saved() else '  (not saved yet)'}")
+
+
 # ----------------------------------------------------------------------- UI
 def fmt_elapsed(s):
     if s is None:
@@ -115,6 +193,8 @@ class Rail:
         self.agents, self.windows = [], []
         self.items = []
         self.last_agents = 0
+        self.closed = []
+        self.last_save = time.time()
         self.tick = 0
         self.msg = ""
         curses.curs_set(0)
@@ -139,6 +219,14 @@ class Rail:
         rows = tmux("list-windows", "-a", "-F",
                     "#{session_name}\t#{window_id}\t#{window_index}\t#{window_name}\t#{@workmux_status}").splitlines()
         self.windows = [r.split("\t") for r in rows]
+        live = {r[0] for r in self.windows}
+        self.closed = [n for n in saved() if n not in live]
+        if time.time() - self.last_save > 60:
+            self.last_save = time.time()
+            rails = tmux("list-panes", "-a", "-F", "#{pane_id} #{" + ROLE + "}").split("\n")
+            ids = sorted(int(r.split()[0][1:]) for r in rails if r.endswith(" rail"))
+            if ids and self.pane == f"%{ids[0]}":  # one rail (the oldest) does the saving
+                subprocess.Popen([SNAPSHOT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if time.time() - self.last_agents > 2:
             self.last_agents = time.time()
             try:
@@ -176,8 +264,12 @@ class Rail:
                     items.append(("session", s))
                     last = s
                 items.append(("window", (s, wid, idx, name, wstat, wid == own_window)))
+            if self.closed:
+                items.append(("blank", None))
+                for name in self.closed:
+                    items.append(("closed", name))
         self.items = items
-        self.selectable = [i for i, (k, _) in enumerate(items) if k in ("agent", "window", "session")]
+        self.selectable = [i for i, (k, _) in enumerate(items) if k in ("agent", "window", "session", "closed")]
         if self.selectable:
             if self.sel not in self.selectable:
                 self.sel = min(self.selectable, key=lambda i: abs(i - self.sel))
@@ -241,6 +333,10 @@ class Rail:
                 if selected:
                     attr = base | curses.A_BOLD
                 self.put(row, 3, text, attr)
+            elif kind == "closed":
+                attr = (base | curses.A_BOLD) if selected else dim
+                self.put(row, 1, f"# {data}", attr)
+                self.put(row, w - 9, "closed", dim if not selected else base)
             elif kind == "blank":
                 pass
         if self.msg:
@@ -269,6 +365,9 @@ class Rail:
         if kind == "window":
             self.goto(d[0], d[1])
         elif kind == "session":
+            self.goto(d, d + ":")
+        elif kind == "closed":
+            open_session(d)
             self.goto(d, d + ":")
         elif kind == "agent":
             pane = d.get("pane_id")
@@ -382,7 +481,15 @@ class Rail:
                 ("",),
                 ("Save session (tmuxp)", "S", f"run-shell -b {q(snap + ' ' + s)}"),
                 ("",),
-                ("Kill session", "X", f"confirm-before -p {q('kill session ' + s + ' and all its windows? (y/n)')} \"kill-session -t {q(s)}\""),
+                ("Close session (saved)", "x", f"run-shell -b {q(rail + ' close ' + s)}"),
+                ("Forget session…", "X", f"confirm-before -p {q('close ' + s + ' and delete its saved copy? (y/n)')} \"run-shell -b {q(rail + ' forget ' + s)}\""),
+            ]
+        if kind == "closed":
+            s = d
+            return f" # {s} (closed) ", [
+                ("Open", "Enter", f"run-shell -b {q(rail + ' open ' + s)}"),
+                ("",),
+                ("Forget…", "X", f"confirm-before -p {q('delete the saved copy of ' + s + '? (y/n)')} \"run-shell -b {q(rail + ' forget ' + s)}\""),
             ]
         if kind == "agent":
             pane = d.get("pane_id") or ""
@@ -404,6 +511,7 @@ class Rail:
         return " rail ", [
             ("Find window…", "/", f"display-popup -E -w 85% -h 80% -T {q(' windows ')} {q(PICKER)}"),
             ("Save all sessions", "S", f"run-shell -b {q(snap)}"),
+            ("Reopen closed sessions", "R", f"run-shell -b {q(rail + ' restore')}"),
             ("",),
             ("Hide rail (C-x C-t)", "h", f"run-shell -b {q(rail + ' off')}"),
         ]
@@ -507,6 +615,14 @@ def main():
         set_enabled("0")
     elif cmd == "toggle":
         set_enabled("0" if enabled() else "1")
+    elif cmd == "ls":
+        ls()
+    elif cmd == "save":
+        save(*sys.argv[2:])
+    elif cmd == "restore":
+        restore()
+    elif cmd in ("open", "close", "forget") and len(sys.argv) == 3:
+        {"open": open_session, "close": close_session, "forget": forget_session}[cmd](sys.argv[2])
     else:
         print(__doc__)
         sys.exit(2)
