@@ -1,5 +1,5 @@
 # Global workmux config. workmux tracks agent status; its own sidebar is kept
-# off and tmux-rail (~/.local/bin/tmux-rail) shows agents + windows instead.
+# off and possum (~/.local/bin/possum) shows agents + windows instead.
 # The sidebar settings below only apply if you run `workmux sidebar on`.
 theme:
   scheme: night-sorbet

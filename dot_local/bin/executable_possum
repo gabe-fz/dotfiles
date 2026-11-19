@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
-"""tmux-rail — left sidebar: workmux agents + every tmux session/window.
+"""possum — left sidebar: workmux agents + every tmux session/window.
+
+Closed sessions play dead (saved to disk) and come back with `possum open`.
 
 Replaces workmux's own sidebar pane (and muxrail before it). workmux still
 tracks agents; this reads them from `workmux status --all --json` and lists
 them above all sessions and windows, muxrail-style.
 
-    tmux-rail run       the sidebar UI (runs inside each rail pane)
-    tmux-rail sync      add/remove/resize rail panes in every window (hooks)
-    tmux-rail on|off|toggle
+    possum run       the sidebar UI (runs inside each possum pane)
+    possum sync      add/remove/resize possum panes in every window (hooks)
+    possum on|off|toggle
 
 Sessions (saved as tmuxp files in ~/.config/tmuxp, auto-saved every minute):
-    tmux-rail ls                 running and saved sessions
-    tmux-rail save [name...]     save sessions now (all by default)
-    tmux-rail open <name>        switch to it; restore it if closed; else create
-    tmux-rail close <name>       save, then close it (reopen with `open`)
-    tmux-rail forget <name>      close it and delete its saved file
-    tmux-rail restore            reopen every saved session that isn't running
+    possum ls                 running and saved sessions
+    possum save [name...]     save sessions now (all by default)
+    possum open <name>        switch to it; restore it if closed; else create
+    possum close <name>       save, then close it (reopen with `open`)
+    possum forget <name>      close it and delete its saved file
+    possum restore            reopen every saved session that isn't running
 
-Rail panes carry the pane option @rail_role=rail. The global option
-@rail_enabled (default on) decides whether `sync` keeps them.
+Possum panes carry the pane option @possum_role=possum. The global option
+@possum_enabled (default on) decides whether `sync` keeps them.
 
-Keys in the rail:
+Keys in the possum:
     j/k ↑/↓  move          enter/click  switch to window / agent pane
     r        rename window x            close window (asks)
     n        new window    /            fuzzy window picker (tmux-windows)
@@ -37,7 +39,7 @@ import sys
 import time
 
 WIDTH = 32
-ROLE = "@rail_role"
+ROLE = "@possum_role"
 SELF = os.path.abspath(__file__)
 PICKER = os.path.expanduser("~/.local/bin/tmux-windows")
 SNAPSHOT = os.path.expanduser("~/.local/bin/tmux-snapshot")
@@ -53,13 +55,13 @@ def tmux(*args, check=False):
 
 # --------------------------------------------------------------------- sync
 def enabled():
-    return tmux("show", "-gqv", "@rail_enabled").strip() != "0"
+    return tmux("show", "-gqv", "@possum_enabled").strip() != "0"
 
 
 def sync():
     # Hooks fire in bursts and run concurrently; serialise per tmux server.
     sock = os.environ.get("TMUX", "default").split(",")[0]
-    lock = f"/tmp/tmux-rail-{os.getuid()}-{hashlib.md5(sock.encode()).hexdigest()[:8]}.lock"
+    lock = f"/tmp/possum-{os.getuid()}-{hashlib.md5(sock.encode()).hexdigest()[:8]}.lock"
     with open(lock, "w") as fh:
         fcntl.flock(fh, fcntl.LOCK_EX)
         _sync()
@@ -72,11 +74,11 @@ def _sync():
     for row in rows:
         wid, pid, role, width, dead = row.split("\t")
         w = windows.setdefault(wid, {"rails": [], "others": []})
-        (w["rails"] if role == "rail" else w["others"]).append((pid, int(width)))
+        (w["rails"] if role == "possum" else w["others"]).append((pid, int(width)))
     on = enabled()
     for wid, w in windows.items():
         rails, others = w["rails"], w["others"]
-        if not others:  # only the rail is left: the window's real work is gone
+        if not others:  # only the possum is left: the window's real work is gone
             if rails:
                 tmux("kill-window", "-t", wid)
             continue
@@ -90,14 +92,14 @@ def _sync():
             new = tmux("split-window", "-hbfd", "-l", str(WIDTH), "-t", others[0][0],
                        "-P", "-F", "#{pane_id}", f"exec {SELF} run").strip()
             if new:
-                tmux("set", "-p", "-t", new, ROLE, "rail")
-                tmux("select-pane", "-t", new, "-T", "rail")
+                tmux("set", "-p", "-t", new, ROLE, "possum")
+                tmux("select-pane", "-t", new, "-T", "possum")
         elif rails[0][1] != WIDTH:
             tmux("resize-pane", "-t", rails[0][0], "-x", str(WIDTH))
 
 
 def set_enabled(value):
-    tmux("set", "-g", "@rail_enabled", value)
+    tmux("set", "-g", "@possum_enabled", value)
     sync()
 
 
@@ -183,7 +185,7 @@ def fmt_elapsed(s):
     return f"{s // 86400}d{(s % 86400) // 3600}h"
 
 
-class Rail:
+class Possum:
     def __init__(self, scr):
         self.scr = scr
         self.pane = os.environ.get("TMUX_PANE", "")
@@ -224,8 +226,8 @@ class Rail:
         if time.time() - self.last_save > 60:
             self.last_save = time.time()
             rails = tmux("list-panes", "-a", "-F", "#{pane_id} #{" + ROLE + "}").split("\n")
-            ids = sorted(int(r.split()[0][1:]) for r in rails if r.endswith(" rail"))
-            if ids and self.pane == f"%{ids[0]}":  # one rail (the oldest) does the saving
+            ids = sorted(int(r.split()[0][1:]) for r in rails if r.endswith(" possum"))
+            if ids and self.pane == f"%{ids[0]}":  # one possum (the oldest) does the saving
                 subprocess.Popen([SNAPSHOT], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         if time.time() - self.last_agents > 2:
             self.last_agents = time.time()
@@ -300,7 +302,7 @@ class Rail:
             if selected:
                 self.put(row, 0, " " * (w - 1), base)
             if kind == "title":
-                self.put(row, 1, "RAIL", curses.color_pair(1) | curses.A_BOLD)
+                self.put(row, 1, "POSSUM", curses.color_pair(1) | curses.A_BOLD)
                 self.put(row, w - 10, "[/] Find", dim)
             elif kind == "section":
                 arrow = "▸" if self.fold[data] else "▾"
@@ -438,13 +440,13 @@ class Rail:
 
     def picker(self):
         c = self.client()
-        # Popen: popups and menus block until closed; keep the rail drawing.
+        # Popen: popups and menus block until closed; keep the possum drawing.
         subprocess.Popen(["tmux", "display-popup", *(["-c", c] if c else []), "-E",
                           "-w", "85%", "-h", "80%", "-T", " windows ", PICKER])
 
     # right-click / `m` menu ------------------------------------------------
     def menu_items(self, kind, d):
-        """(label, key, tmux command) rows for a rail item; ("",) = separator."""
+        """(label, key, tmux command) rows for a possum item; ("",) = separator."""
         def q(v):  # quote a value for a tmux command string
             v = str(v).replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("#", "##")
             return f'"{v}"'
@@ -453,7 +455,7 @@ class Rail:
             return tmux("display", "-p", "-t", target, "#{pane_current_path}").strip() or os.path.expanduser("~")
 
         snap = os.path.expanduser("~/.local/bin/tmux-snapshot")
-        rail = SELF
+        possum = SELF
         if kind == "window":
             s, wid, idx, name, _, _ = d
             same = [w for w in self.windows if w[0] == s]
@@ -481,15 +483,15 @@ class Rail:
                 ("",),
                 ("Save session (tmuxp)", "S", f"run-shell -b {q(snap + ' ' + s)}"),
                 ("",),
-                ("Close session (saved)", "x", f"run-shell -b {q(rail + ' close ' + s)}"),
-                ("Forget session…", "X", f"confirm-before -p {q('close ' + s + ' and delete its saved copy? (y/n)')} \"run-shell -b {q(rail + ' forget ' + s)}\""),
+                ("Close session (saved)", "x", f"run-shell -b {q(possum + ' close ' + s)}"),
+                ("Forget session…", "X", f"confirm-before -p {q('close ' + s + ' and delete its saved copy? (y/n)')} \"run-shell -b {q(possum + ' forget ' + s)}\""),
             ]
         if kind == "closed":
             s = d
             return f" # {s} (closed) ", [
-                ("Open", "Enter", f"run-shell -b {q(rail + ' open ' + s)}"),
+                ("Open", "Enter", f"run-shell -b {q(possum + ' open ' + s)}"),
                 ("",),
-                ("Forget…", "X", f"confirm-before -p {q('delete the saved copy of ' + s + '? (y/n)')} \"run-shell -b {q(rail + ' forget ' + s)}\""),
+                ("Forget…", "X", f"confirm-before -p {q('delete the saved copy of ' + s + '? (y/n)')} \"run-shell -b {q(possum + ' forget ' + s)}\""),
             ]
         if kind == "agent":
             pane = d.get("pane_id") or ""
@@ -507,13 +509,13 @@ class Rail:
                 rows.insert(0, (f"-{title[:28]}", "", ""))  # leading '-' = disabled row (shows the task)
                 rows.insert(1, ("",))
             return f" #{s} {name} ", rows
-        # title / section rows: rail-wide actions
-        return " rail ", [
+        # title / section rows: possum-wide actions
+        return " possum ", [
             ("Find window…", "/", f"display-popup -E -w 85% -h 80% -T {q(' windows ')} {q(PICKER)}"),
             ("Save all sessions", "S", f"run-shell -b {q(snap)}"),
-            ("Reopen closed sessions", "R", f"run-shell -b {q(rail + ' restore')}"),
+            ("Reopen closed sessions", "R", f"run-shell -b {q(possum + ' restore')}"),
             ("",),
-            ("Hide rail (C-x C-t)", "h", f"run-shell -b {q(rail + ' off')}"),
+            ("Hide possum (C-x C-t)", "h", f"run-shell -b {q(possum + ' off')}"),
         ]
 
     def menu(self, row):
@@ -600,7 +602,7 @@ class Rail:
 
 def run():
     os.environ.setdefault("ESCDELAY", "25")
-    curses.wrapper(lambda scr: Rail(scr).loop())
+    curses.wrapper(lambda scr: Possum(scr).loop())
 
 
 def main():
