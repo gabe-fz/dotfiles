@@ -17,6 +17,7 @@ Keys in the rail:
     r        rename window x            close window (asks)
     n        new window    /            fuzzy window picker (tmux-windows)
     a / w    fold agents / windows      S  snapshot sessions (tmuxp)
+    m / right-click   menu for the item (switch, rename, move, save, close…)
 """
 import curses
 import fcntl
@@ -245,7 +246,7 @@ class Rail:
         if self.msg:
             self.put(h - 1, 1, self.msg, dim)
         else:
-            self.put(h - 1, 1, "⏎ go r ren x close n new", dim)
+            self.put(h - 1, 1, "⏎ go  m/right-click menu", dim)
         self.scr.refresh()
 
     # actions
@@ -338,8 +339,94 @@ class Rail:
 
     def picker(self):
         c = self.client()
-        tmux("display-popup", *(["-c", c] if c else []), "-E", "-w", "85%", "-h", "80%",
-             "-T", " windows ", PICKER)
+        # Popen: popups and menus block until closed; keep the rail drawing.
+        subprocess.Popen(["tmux", "display-popup", *(["-c", c] if c else []), "-E",
+                          "-w", "85%", "-h", "80%", "-T", " windows ", PICKER])
+
+    # right-click / `m` menu ------------------------------------------------
+    def menu_items(self, kind, d):
+        """(label, key, tmux command) rows for a rail item; ("",) = separator."""
+        def q(v):  # quote a value for a tmux command string
+            v = str(v).replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("#", "##")
+            return f'"{v}"'
+
+        def path_of(target):
+            return tmux("display", "-p", "-t", target, "#{pane_current_path}").strip() or os.path.expanduser("~")
+
+        snap = os.path.expanduser("~/.local/bin/tmux-snapshot")
+        rail = SELF
+        if kind == "window":
+            s, wid, idx, name, _, _ = d
+            same = [w for w in self.windows if w[0] == s]
+            pos = next((i for i, w in enumerate(same) if w[1] == wid), 0)
+            rows = [
+                (f"Switch to {name}", "Enter", f"switch-client -t {q(s)} ; select-window -t {wid}"),
+                ("Rename…", "r", f"command-prompt -I {q(name)} -p {q('rename window:')} \"rename-window -t {wid} -- '%%'\""),
+                ("New window after", "n", f"new-window -a -t {wid} -c {q(path_of(wid))}"),
+            ]
+            if pos > 0:
+                rows.append(("Move up", "u", f"swap-window -d -s {wid} -t {same[pos - 1][1]}"))
+            if pos < len(same) - 1:
+                rows.append(("Move down", "d", f"swap-window -d -s {wid} -t {same[pos + 1][1]}"))
+            rows += [("",),
+                     (f"Save session {s}", "S", f"run-shell -b {q(snap + ' ' + s)}"),
+                     ("",),
+                     ("Close window", "x", f"confirm-before -p {q('close window ' + name + '? (y/n)')} \"kill-window -t {wid}\"")]
+            return f" {name} ", rows
+        if kind == "session":
+            s = d
+            return f" # {s} ", [
+                (f"Switch to {s}", "Enter", f"switch-client -t {q(s)}"),
+                ("Rename session…", "r", f"command-prompt -I {q(s)} -p {q('rename session:')} \"rename-session -t {q(s)} -- '%%'\""),
+                ("New window", "n", f"new-window -t {q(s + ':')} -c {q(path_of(s + ':'))}"),
+                ("",),
+                ("Save session (tmuxp)", "S", f"run-shell -b {q(snap + ' ' + s)}"),
+                ("",),
+                ("Kill session", "X", f"confirm-before -p {q('kill session ' + s + ' and all its windows? (y/n)')} \"kill-session -t {q(s)}\""),
+            ]
+        if kind == "agent":
+            pane = d.get("pane_id") or ""
+            s = d.get("session") or ""
+            name = d.get("window_name") or ""
+            title = (d.get("title") or "").lstrip("✳ ").strip()
+            rows = [
+                ("Go to agent", "Enter", f"switch-client -t {q(s)} ; select-window -t {pane} ; select-pane -t {pane}"),
+                ("Go to agent, zoomed", "z", f"switch-client -t {q(s)} ; select-window -t {pane} ; select-pane -t {pane} ; resize-pane -Z -t {pane}"),
+                ("Rename window…", "r", f"command-prompt -I {q(name)} -p {q('rename window:')} \"rename-window -t {pane} -- '%%'\""),
+                ("",),
+                ("Close agent pane", "x", f"confirm-before -p {q('close the ' + (d.get('agent_kind') or 'agent') + ' pane in ' + name + '? (y/n)')} \"kill-pane -t {pane}\""),
+            ]
+            if title:
+                rows.insert(0, (f"-{title[:28]}", "", ""))  # leading '-' = disabled row (shows the task)
+                rows.insert(1, ("",))
+            return f" #{s} {name} ", rows
+        # title / section rows: rail-wide actions
+        return " rail ", [
+            ("Find window…", "/", f"display-popup -E -w 85% -h 80% -T {q(' windows ')} {q(PICKER)}"),
+            ("Save all sessions", "S", f"run-shell -b {q(snap)}"),
+            ("",),
+            ("Hide rail (C-x C-t)", "h", f"run-shell -b {q(rail + ' off')}"),
+        ]
+
+    def menu(self, row):
+        i = self.top + row
+        if not (0 <= i < len(self.items)):
+            return
+        kind, d = self.items[i]
+        if i in self.selectable:
+            self.sel = i
+        title, rows = self.menu_items(kind, d)
+        args = []
+        for r in rows:
+            args += [""] if r == ("",) else [r[0], r[1], r[2]]
+        left, top = (tmux("display", "-p", "-t", self.pane, "#{pane_left} #{pane_top}").split() + ["0", "0"])[:2]
+        height = len(rows) + 2
+        # A numeric -y is where the menu's bottom edge goes; put its top on the clicked row.
+        y = int(top) + row + height
+        x = int(left) + 2
+        c = self.client()
+        subprocess.Popen(["tmux", "display-menu", *(["-c", c] if c else []), "-t", self.pane,
+                          "-T", f"#[align=centre]{title}", "-x", str(x), "-y", str(y), *args])
 
     def move(self, step):
         if not self.selectable:
@@ -372,6 +459,8 @@ class Rail:
                 self.new()
             elif k == ord("/"):
                 self.picker()
+            elif k == ord("m"):
+                self.menu(self.sel - self.top)
             elif k == ord("a"):
                 self.fold["agents"] = not self.fold["agents"]
             elif k == ord("w"):
@@ -390,6 +479,11 @@ class Rail:
                     continue
                 if bstate & curses.BUTTON1_PRESSED or bstate & curses.BUTTON1_CLICKED:
                     self.click(my)
+                elif bstate & curses.BUTTON3_PRESSED:
+                    self.sel = self.top + my if self.top + my in self.selectable else self.sel
+                elif bstate & (curses.BUTTON3_RELEASED | curses.BUTTON3_CLICKED):
+                    # Open on release: a menu opened on press is closed by the release.
+                    self.menu(my)
                 elif bstate & getattr(curses, "BUTTON4_PRESSED", 0):
                     self.move(-1)
                 elif bstate & getattr(curses, "BUTTON5_PRESSED", 0):
