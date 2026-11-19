@@ -533,11 +533,13 @@ class Possum:
         left, top = (tmux("display", "-p", "-t", self.pane, "#{pane_left} #{pane_top}").split() + ["0", "0"])[:2]
         height = len(rows) + 2
         # -M: a menu opened outside a tmux mouse binding ignores clicks otherwise.
+        # -O: stay open until clicked; else moving the mouse (a no-button
+        # "release" to tmux) closes it.
         # A numeric -y is where the menu's bottom edge goes; put its top on the clicked row.
         y = int(top) + row + height
         x = int(left) + 2
         c = self.client()
-        subprocess.Popen(["tmux", "display-menu", "-M", *(["-c", c] if c else []), "-t", self.pane,
+        subprocess.Popen(["tmux", "display-menu", "-M", "-O", *(["-c", c] if c else []), "-t", self.pane,
                           "-T", f"#[align=centre]{title}", "-x", str(x), "-y", str(y), *args])
 
     def move(self, step):
